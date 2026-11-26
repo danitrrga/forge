@@ -66,15 +66,22 @@ From a worktree or any subfolder it finds the main checkout's file through git's
 
 ```json
 { "schema": 1,
+  "project": { "checks": ["npm test"], "default_branch": "main" },
   "models": { "executor": { "small": "haiku", "normal": "sonnet", "big": "sonnet" } },
   "rounds": 3,
   "linear": { "labels": { "needs-owner": "your-label-for-it" } } }
 ```
 
+A hand-written file needs `project.checks` (the commands that gate a wave: `fwx verify` and `fwx wave new` refuse with none) and
+`project.default_branch` (the session's phase branch starts from it and the closing's pull request goes to it; no setup tool reads it from git for you).
+Before the first `fwx wave run`, `worktree.baseRef` must be `"head"` in `.claude/settings.local.json` (or another of the project's Claude settings files): without it an
+agent's worktree starts from the default branch and not from the phase branch, and `fwx wave new` refuses and says so.
+
 Keys you leave out keep the defaults in `DEFAULTS` (`config.py`), so a file may hold only what you change; a `models`
 entry may name one role and one size. `schema` must be 1. A model is an alias (`sonnet`, `opus`, `haiku`, `fable`),
 never a full model id, and the roles and sizes are the `ROLES` and `SIZES` of `config.py`. A bad file is an error that names the
-fix. With no file, the defaults apply and one line on stderr says so.
+fix. With no file, the defaults apply and one line on stderr says so. The planner defaults to `opus`: a plan with no Opus sets `models.planner` to
+another alias (`"planner": { "small": "sonnet", "normal": "sonnet", "big": "sonnet" }`).
 
 `fwx model <role> <size>` prints the model for a role and size and exits 2 on an unknown role or size, naming the valid
 ones. `linear.labels` maps a label's neutral name in this repository to the name it has in your Linear workspace; a
@@ -117,7 +124,7 @@ The `project` table:
 - `project.name`, `project.main_checkout`: the project's name and main checkout; forge writes them, and without a file they are the folder's name and path.
 - `project.linear_project`: the Linear project the framework files issues in (default none; forge uses the project file's `linear_project`, else the remote's name).
 - `project.default_branch`: the branch pull requests go to, which `fwx verify` treats as the default branch (forge reads it from git); `project.factory_branch` (default `"factory"`) is where factory work lands.
-- `project.checks` (default `[]`): the commands that gate a wave; `project.checks_quick` (`[]`) are the quick ones `fwx wave` runs in each worktree. At the end of a part the gate is GitHub CI when it can answer (the branch is pushed and a draft pull request opened, and the CI run on it stands for `project.checks`); with no GitHub origin, no CI file or no answer, `project.checks` run here. A check CI cannot run goes in `checks_quick`, which always runs here.
+- `project.checks` (default `[]`): the commands that gate a wave; `project.checks_quick` (`[]`) are the quick ones `fwx wave` runs in each worktree. At the end of a part the gate is GitHub CI when it can answer: with a GitHub origin, `gh` signed in and a workflow file named `ci.yml` in the repository's .github/workflows folder, fwx pushes the phase branch (`fwx/<milestone>-<phase>`, never forced) to `origin`, opens a draft pull request for it and takes the CI run on it for `project.checks`, so it needs push rights; with no GitHub origin, no such file or no answer, `project.checks` run here. A check CI cannot run goes in `checks_quick`, which always runs here.
 - `project.protected_paths` (`[]`): globs a task may not write without the security review, added to the decide table's own.
 - `project.production` (`{"branches": [], "commands": []}`): the branches a merge ships to users from and the commands that deploy; a deploy runs only through the consent window.
 - `project.verdict_command` (default none): the command the demo agent runs to show a UI change in the app.
@@ -141,8 +148,17 @@ fwx runs on Linux only: its cleanup, `worktree_setup` and UI walk read `/proc`. 
 
 ## Install
 
-A setup tool such as forge installs and configures the plugin. By hand, add this folder as a marketplace and enable
-`fwx@fwx`.
+A setup tool such as forge installs and configures the plugin. By hand, with the `claude` command line:
+
+```
+claude plugin marketplace add danitrrga/forge
+claude plugin install fwx@fwx
+```
+
+The plugin's `bin/fwx` is on `PATH` only inside Claude's Bash tool, so the skills' bare `fwx` works there; in a plain terminal run
+`python3 <clone>/plugins/fwx/bin/fwx` from a clone of the repository. fwx needs Python 3 and is tested on 3.14 and later.
+`fwx wave run` also needs the Orca app and its command line (`orca` on `PATH`, at least the version `orca/orca-plugin.json` names under `engines`) because
+every agent of a part is an Orca worker, and refuses with a line that says so when it is missing; discuss, plan and the mortems do not need Orca.
 
 ## Contributing
 
