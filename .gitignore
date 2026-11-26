@@ -24,6 +24,7 @@
 !/githooks/
 !/examples/
 !/.github/
+!/.claude-plugin/
 !/tests/
 /tests/test_gate.py
 
