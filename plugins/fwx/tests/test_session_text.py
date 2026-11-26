@@ -270,6 +270,25 @@ def main():
           "missing %s" % fills_template(rep_ref))
     check("control: a part-report.md that names no template is caught", bool(fills_template("Run `fwx wave --run <R> --json` and paste the last `evidence` row of audit.tsv.")))
 
+    # r1-F1: the keys the report texts read from `fwx wave --run <R> --json` are the keys `integrate.summary` returns: the review's facts are under
+    # `findings` (`findings.consider`, `findings.outside` for the filed ones), the unfiled `outside` items at the top. `result` and `file` are not keys
+    # of it (`result` belongs to `fwx wave list --json`). Seen red before the fix:
+    #   FAIL: part-report.md and templates/phase/report.md read only keys `wave --run --json` returns -> cites no `findings.<key>`; names ['`result`', '`file`']
+    from fwx.execute import integrate as wave_integrate  # noqa: E402
+    with tempfile.TemporaryDirectory(prefix="fwx-summary-") as toy_repo:
+        subprocess.run("git init -q -b master", shell=True, cwd=toy_repo, check=True)
+        summary_keys = wave_integrate.summary(toy_repo, None, branch="master")[1]
+    top_keys, found_keys = set(summary_keys), set(summary_keys["findings"])
+
+    def wave_json_problems(text):
+        dotted = re.findall(r"`findings\.([a-z_]+)`", text)
+        bare = [w for w in ("`result`", "`file`") if w in text and w[1:-1] not in top_keys]
+        return (["cites no `findings.<key>`"] if not dotted else []) + ["`findings.%s`" % k for k in dotted if k not in found_keys] + (["names %s" % bare] if bare else [])
+    problems = wave_json_problems(rep_ref + "\n" + template)
+    check("part-report.md and templates/phase/report.md read only keys `wave --run --json` returns", not problems and "outside" in top_keys, "; ".join(problems))
+    check("control: a text that reads `result` or `findings.fil` of the run is caught",
+          bool(wave_json_problems("read `result` and `findings.consider`")) and bool(wave_json_problems("read `findings.fil`")) and not wave_json_problems("`findings.consider` and `findings.outside`"))
+
     def closing_body(text):
         return [w for w in ("templates/phase/report.md", '--why "PR <url>"', '--why "commit <sha>"') if w not in text] + (
             [] if in_order(text, "templates/phase/report.md", "gh pr edit", "fwx stage <phase folder> closed") else ["the order template, gh pr edit, stage row"])
