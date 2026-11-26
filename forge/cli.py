@@ -1491,10 +1491,16 @@ GROUPS = {"fwx": "plugins/fwx"}
 FWX_PREFIX = GROUPS["fwx"] + "/"
 
 
-# The files that take minutes (test_switch, test_run, test_new and test_messages: each 2 to 3 minutes on a loaded 16-CPU machine; every other
-# file is under about 25 s) start first when files run at once: by size alone they begin late and the run waits for them. A stale name costs
-# minutes, never a result.
-SLOW_FIRST = ("tests/test_run.py", "tests/test_switch.py", "tests/test_messages.py", "tests/test_new.py")
+# The twelve slowest engine files (measured per file in CI: test_run 311 s, test_publish 109 s, the rest of the twelve in between) start first
+# when files run at once: by size alone they begin late and the run waits for them. A stale name costs minutes, never a result. hooks/test_guard_tool_use.py takes
+# about six cores by itself. They are dealt round-robin to the 4 shards in this order, three to each, so every shard sums to about 470-500 s:
+# the four heaviest (test_run, test_switch, test_new, test_ask) are in four different shards, test_run (4 inner workers) with light companions,
+# and test_publish, test_configure, test_messages and the guard file each in a shard that does not hold test_run.
+SLOW_FIRST = (
+    "tests/test_run.py", "tests/test_switch.py", "tests/test_new.py", "tests/test_ask.py",
+    "tests/test_profiles.py", "tests/test_publish.py", "tests/test_messages.py", "tests/test_configure.py",
+    "tests/test_doctor.py", "tests/test_test_group.py", "hooks/test_guard_tool_use.py", "tests/test_framework_ignore_block.py",
+)
 
 
 def _size(path):
@@ -1631,28 +1637,41 @@ def cmd_test(a):
         todo = [f for f in todo if f in mine]
 
     failed_output = {}  # file -> its output, for the lines that end the run
+    import threading
+    stopping = threading.Event()
 
     def run_one(f):
         # nice 19 and idle I/O: a foreground tool keeps its cores. stderr joins stdout, as in a terminal: a traceback is on stderr, and -u (unbuffered)
         # keeps its place against the stdout lines printed before it.
-        r = lib.run_low([sys.executable, "-u", f], cwd=lib.ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_env)
+        def go():
+            return lib.run_low([sys.executable, "-u", f], cwd=lib.ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_env)
+
+        began = time.monotonic()
+        r = go()
+        first = testgroup.killed(r.returncode, r.stdout)  # a file killed by a signal is run once more, never twice more
+        if first and not stopping.is_set():
+            r = go()
+        secs = time.monotonic() - began
         if r.returncode == lib.NOT_RUN:
             # A test that lacks a tool or the network says so and exits 77: yellow, never a pass
             # (CLAUDE.md, rule 4). Its last line is why, after "NOT RUN: ".
             why = (r.stdout.strip().splitlines() or [f])[-1].removeprefix("NOT RUN: ")
             return lib.Result("WARN", os.path.basename(f), "NOT RUN, NOT ARMED: %s" % why)
         if r.returncode == 0:
-            return lib.Result("PASS", os.path.basename(f), f)  # success is silent: its output is dropped
+            if first:  # green only on the second run: a warning in the summary, never a quiet pass
+                return lib.Result("WARN", os.path.basename(f), "passed on the second run (the first: %s)  %s  %.1fs" % (first, f, secs))
+            return lib.Result("PASS", os.path.basename(f), "%s  %.1fs" % (f, secs))  # success is silent: its output is dropped; its seconds are not
         failed_output[f] = r.stdout
-        return lib.Result("FAIL", os.path.basename(f), "python3 %s%s" % (f, failure_tail(r.stdout, r.returncode)))
+        again = "\n    (run twice; the first: %s, the second failed too)" % first if first else ""
+        return lib.Result("FAIL", os.path.basename(f), "python3 %s%s%s" % (f, again, failure_tail(r.stdout, r.returncode)))
 
     with testgroup.private_tmp(os.environ) as child_env:  # TMPDIR outside any checkout for the children, and gone after
-        run_all(todo, workers, run_one, results)
+        run_all(todo, workers, run_one, results, stopping)
     # The failed files named last (before the SUMMARY line): a reader that keeps only the tail of the output, as fwx's gate does, still sees them.
     return lib.report(results, testgroup.failed_lines([(os.path.basename(f), failed_output[f]) for f in todo if f in failed_output]))
 
 
-def run_all(todo, workers, run_one, results):
+def run_all(todo, workers, run_one, results, stopping=None):
     """Run `todo` with run_one, `workers` at once, appending the results to `results` in the order of `todo`."""
     if workers == 1:
         results.extend(run_one(f) for f in todo)
@@ -1665,6 +1684,10 @@ def run_all(todo, workers, run_one, results):
         try:
             futures = {f: pool.submit(run_one, f) for f in start_order(todo)}
             results.extend(futures[f].result() for f in todo)
+        except BaseException:
+            if stopping is not None:
+                stopping.set()
+            raise
         finally:
             pool.shutdown(wait=True, cancel_futures=True)  # an interrupt: the running files finish, the queued ones never start
 

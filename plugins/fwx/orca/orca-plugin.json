@@ -3,7 +3,7 @@
   "id": "fwx-session",
   "name": "fwx session",
   "version": "0.1.0",
-  "description": "Where the fwx session of the workspace in view stands: project, stage and part.",
+  "description": "Where the fwx session of the workspace in view stands: project, stage and part, and the live fwx wave run.",
   "engines": {
     "orca": ">=1.4.259"
   },

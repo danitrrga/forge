@@ -4,7 +4,7 @@
 import { execFile } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { chipText, parsePhases, parseSession, snapshot, tooltip, type Snapshot } from './session'
+import { chipText, parsePhases, parseSession, parseWaves, snapshot, tooltip, type Snapshot } from './session'
 
 const EVERY_MS = 5000
 const FWX_TIMEOUT_MS = 4000
@@ -49,9 +49,16 @@ export default function activate(orca: OrcaWorkerApi): void {
       const session = parseSession(await fwx(here.path, ['session', '--json']))
       // The roadmap is a second read of the same folder; without it the chip still shows.
       const sub = session?.subproject ? ['--subproject', session.subproject] : []
-      const list = session?.project ? parsePhases(await fwx(here.path, ['phase', 'list', '--json', ...sub]).catch(() => '')) : parsePhases('')
+      const [phaseOut, waveOut] = session?.project
+        ? await Promise.all([
+            fwx(here.path, ['phase', 'list', '--json', ...sub]).catch(() => ''),
+            fwx(here.path, ['wave', 'list', '--json']).catch(() => '')
+          ])
+        : ['', '']
+      const list = parsePhases(phaseOut)
+      const waves = parseWaves(waveOut)
       lastProblem = ''
-      return snapshot(session, list)
+      return snapshot(session, list, waves)
     } catch (e) {
       const problem = `fwx in ${here.path}: ${e instanceof Error ? e.message : String(e)}`
       if (problem !== lastProblem) orca.log(problem)
@@ -70,7 +77,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     await orca.host.call(
       'statusBar.update',
       shot
-        ? { id: 'session', visible: true, text: chipText(shot), tooltip: tooltip(shot), tone: shot.phase ? 'accent' : 'neutral' }
+        ? { id: 'session', visible: true, text: chipText(shot), tooltip: tooltip(shot), tone: shot.phase || shot.activeRun ? 'accent' : 'neutral' }
         : { id: 'session', visible: false }
     )
     orca.panels.post('session.changed', { snapshot: shot })

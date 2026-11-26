@@ -18,7 +18,8 @@ on `--resume` to refresh it, refused with `--plane factory` and `--unattended`; 
 starts anyone, then drives the part to its end with every agent an Orca worker (execute/run.py says how, execute/orca.py is the one module that
 talks to Orca) and prints one line, `run <R> <done|failed|needs-owner>: <why>`, exit 0, 1 and 3 for the three; it exits 2 when a live run already
 holds the branch (naming it and `--resume`) and when there is no base context to give a worker. `wave list` prints one line per run (id, part,
-branch, state, pid and whether it lives, open workers of the total, last step).
+branch, state, pid and whether it lives, open workers of the total, last step); `wave list --json` prints `{"runs": [...]}` with the planned waves, the workers
+and the last progress lines of each, which the Orca panel and chip read.
 
 `fwx base <sha> [--worktree P]` is step 0 of every agent that writes: exit 0 when the current folder is a linked worktree
 (the one at `P`, when given) whose HEAD is `<sha>` (a fresh worktree, as Claude Code made it and nothing written in it, is first moved there: execute/base.py `_fresh`),
@@ -79,7 +80,7 @@ PREPARE_USAGE = ("usage: fwx wave new --part-dir D --plane session|factory --bra
                  "[--fix F] [--revert IDS] [--control-findings F] [--from gate]\n")
 RUN_USAGE = ("usage: fwx wave run --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS] "
              "[--control-findings F] [--from gate] [--orchestrator orca_session_id:<uuid>]   |   fwx wave run --resume R [--orchestrator orca_session_id:<uuid>]\n")
-LIST_USAGE = "usage: fwx wave list\n"
+LIST_USAGE = "usage: fwx wave list [--json]\n"
 CHECK_USAGE = "usage: fwx base <sha> [--worktree P]   (sha: 7 to 40 hex digits)\n"
 SETUP_USAGE = "usage: fwx wave setup [--force]\n"
 SCRATCH_USAGE = "usage: fwx scratch new <run> <unit>   (each one folder name: letters, digits, `.`, `_`, `-`)\n"
@@ -231,17 +232,20 @@ def do_run(argv):
 
 
 def do_list(argv):
-    if argv:
+    if argv and argv != ["--json"]:
         sys.stderr.write(LIST_USAGE)
         return 2
     try:
         top = base.toplevel(os.getcwd())
         if top is None:
             raise base.WaveError("not inside a git repository: %s" % os.getcwd())
-        rows = run_mod.listing(top)
+        rows = run_mod.listing_json(top) if argv else run_mod.listing(top)
     except base.WaveError as e:
         sys.stderr.write("fwx wave list: %s\n" % e)
         return 2
+    if argv:
+        print(json.dumps({"runs": rows}))
+        return 0
     for row in rows:
         print(row)
     return 0

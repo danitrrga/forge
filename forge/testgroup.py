@@ -32,8 +32,13 @@ starting the one long file; a duration table would have to be written somewhere 
 child runs in its own session: SIGINT, SIGTERM or SIGHUP to the runner sends SIGTERM to every running child's whole process group (the
 test's own cleanup runs), SIGKILL to what is left after 5 s, and exits 128 + the signal, so nothing a test started outlives the run.
 SIGKILL of the runner itself cannot be caught and leaves them.
+
+A file that was killed by a signal (a negative exit code), or that exits non-zero with `rc=-9` or `-SIGKILL` in its output (a grandchild it
+started was killed), says nothing about the code: it is run once more (`killed`). Green the second time is a PASS plus a WARN line that
+names the file and says it passed on the second run; red twice is a FAIL, never a third run. An exit 1 with no such mark is never rerun.
 """
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -49,6 +54,29 @@ NAME = "forge test fwx"  # what the messages say: the group is the only one ther
 MAX_DEFAULT_JOBS = 8
 GRACE_S = 5
 STOP = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+
+KILL_MARKS = (re.compile(r"\brc=-9\b"), re.compile(r"-SIGKILL\b"))  # what a test prints when a process it started was killed (its own exit code is then 1)
+
+
+def killed(code, output):
+    """Why a finished file may be run once more, or None: it died of a non-stop signal (code < 0, excluding SIGINT/SIGTERM/SIGHUP), or it
+    failed (not 0, not 77) with a KILL_MARKS match in its output. A plain failure, a pass, a NOT RUN and Ctrl-C are never retried."""
+    if code is None:  # the runner was stopped before the file started
+        return None
+    if code < 0:
+        if -code in STOP:  # user interrupt or runner termination: never re-run
+            return None
+        try:
+            return "killed by %s" % signal.Signals(-code).name
+        except ValueError:
+            return "killed by signal %d" % -code
+    if code not in (0, 77):
+        for pat in KILL_MARKS:
+            m = pat.search(output)
+            if m:
+                return "its output holds %s" % m.group(0)
+    return None
 
 
 def failed_lines(failed):
@@ -110,10 +138,16 @@ def parse_shard(values):
     return None, "%s: --shard wants I/N with 1 <= I <= N (both whole numbers), got %r" % (NAME, values[0])
 
 
-# The slowest fwx files (measured on a 16-CPU workstation: 290 s, 121 s, 75 s; the next of the five largest is 39 s) are dealt
-# first, in this order, so with 3 shards each gets one: by size alone test_walk and test_ui_walk_workflow land in the same shard. A stale name
+# The twelve slowest fwx files (measured per file in CI: test_wave_run 272 s, test_walk 175 s, test_wave_review 163 s, then nine
+# smaller ones, test_ui_walk_workflow 94 s among them) are dealt first, in this order, round-robin, four to each of the 3 shards, so every shard sums to about 470-510 s:
+# the three heaviest are in three different shards, and by size alone test_wave_run and test_ui_walk_workflow land in the same one. A stale name
 # costs minutes, never a result (tests/test_test_shard.py checks that every name is a tracked file).
-FWX_SLOW_FIRST = ("tests/test_walk.py", "tests/test_ui_walk_workflow.py", "tests/test_worktree_setup.py")
+FWX_SLOW_FIRST = (
+    "tests/test_wave_run.py", "tests/test_walk.py", "tests/test_wave_review.py",
+    "tests/test_ci_gate.py", "tests/test_ui_walk_workflow.py", "tests/test_wave_integrate.py",
+    "tests/test_wave_report.py", "tests/test_walk_selftest.py", "tests/test_migrate_gsd.py",
+    "tests/test_wave_prepare.py", "tests/test_screenshot.py", "tests/test_worktree_setup.py",
+)
 
 
 def start_order(files, root):
@@ -154,10 +188,21 @@ class Children:
         self.stopped = False
 
     def run(self, rel, root, env):
-        """(exit code, output) of one test file; its stdout and stderr in one string, as a single `subprocess.run` gave."""
+        """(exit code, output, seconds, why) of one test file; its stdout and stderr in one string, as a single `subprocess.run` gave.
+        A file that `killed` says it was is run once more, and what that second run gave is the result; `why` is what ended the first run
+        (None when there was no second run)."""
+        code, out, secs = self._once(rel, root, env)
+        why = killed(code, out)
+        if why is None:
+            return code, out, secs, None
+        code, out, again = self._once(rel, root, env)
+        return code, out, secs + again, why
+
+    def _once(self, rel, root, env):
         with self.lock:
             if self.stopped:
-                return None, ""
+                return None, "", 0.0
+            began = time.monotonic()
             p = subprocess.Popen([sys.executable, rel], cwd=root, env=env, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
             self.live[p.pid] = p
@@ -166,7 +211,7 @@ class Children:
         finally:
             with self.lock:
                 self.live.pop(p.pid, None)
-        return p.returncode, out
+        return p.returncode, out, time.monotonic() - began
 
     def kill_all(self):
         """SIGTERM to every group, SIGKILL to what is still there after GRACE_S. Returns how many were running."""
@@ -261,10 +306,12 @@ def run_group(root, expect_values, jobs_values, label, shard_values, env):
     try:
         futures = {rel: pool.submit(children.run, rel, root, env) for rel in start}
         for rel in files:
-            code, output = futures[rel].result()
+            code, output, secs, why = futures[rel].result()
             if code == 0:
                 passed += 1
-                print("PASS  " + rel)
+                print("PASS  %s  %.1fs" % (rel, secs))
+                if why:
+                    print("WARN  %s: passed on the second run (the first: %s)" % (rel, why))
             elif code == 77 and rel in expect:
                 expected += 1
                 print("%s: %s: %s" % (EXPECTED, rel, reason(output)))
@@ -273,7 +320,9 @@ def run_group(root, expect_values, jobs_values, label, shard_values, env):
                 print("%s: %s: %s" % (NOT_RUN, rel, reason(output)))
             else:
                 failed += 1
-                print("FAIL  %s (exit %d)" % (rel, code))
+                print("FAIL  %s (exit %s)" % (rel, code))
+                if why:
+                    print("    (run twice: the first run was %s, the second failed too)" % why)
                 for line in output.splitlines():
                     print("    " + line)
                 failures.append((rel, output))

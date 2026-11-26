@@ -123,16 +123,6 @@ def own_terminal():
     return handle
 
 
-def terminal_create(path, title):
-    """A terminal in the checkout `path`, titled `title`, and its handle: the sender `run-create` needs, as the session variables that would have
-    named one are stripped (Orca 1.4.273: `no_active_sender_terminal`). It is created in the background, not focused."""
-    got = result("terminal", "create", "--worktree", "path:" + path, "--title", title)
-    handle = _first(got, ("handle",))
-    if not handle:
-        raise OrcaError("orca terminal create named no handle: %s" % json.dumps(got)[:200])
-    return handle
-
-
 def terminal_alive(handle):
     """Whether Orca still has the terminal: a closed handle is not an error, `show` answers ok with `terminal.orphaned: true` (Orca 1.4.273)."""
     try:
@@ -159,25 +149,43 @@ def _not_found(e):
     return "selector_not_found" in str(e)
 
 
-def start(run, spec_file, model, worktree, sender, title=None):
-    """`worker-start` in `worktree`, once Orca knows it: Orca discovers a worktree made with git only after a while (`selector_not_found` until then),
-    so ask `worktree show` and retry a `selector_not_found` of `worker-start` for DISCOVER_S; past that, OrcaError naming the worktree."""
+def _discover(attempt, never):
+    """`attempt()` until Orca knows the worktree it names: a `selector_not_found` is retried for DISCOVER_S (every DISCOVER_POLL_S), any other OrcaError is raised,
+    and past the bound the OrcaError says `never` and the last answer."""
     bound, poll = _seconds("FWX_ORCA_DISCOVER_S", DISCOVER_S), _seconds("FWX_ORCA_DISCOVER_POLL_S", DISCOVER_POLL_S)
     deadline = time.monotonic() + bound
-    never = "orca never discovered the worktree %s in %d s" % (worktree, bound)
-    args = ("orchestration", "worker-start", "--spec-file", spec_file, "--run", run, "--agent", "claude", "--model", model,
-            "--worktree", "path:" + worktree, "--from", sender) + (("--task-title", title) if title else ())
     while True:
         try:
-            result("worktree", "show", "--worktree", "path:" + worktree)
-            got = result(*args)
-            break
+            return attempt()
         except OrcaError as e:
             if not _not_found(e):
                 raise
             if time.monotonic() >= deadline:
-                raise OrcaError("%s (last answer: %s)" % (never, e))
+                raise OrcaError("%s in %d s (last answer: %s)" % (never, bound, e))
             time.sleep(poll)
+
+
+def terminal_create(path, title):
+    """A terminal in the worktree `path`, titled `title`, and its handle: the sender `run-create` needs, as the session variables that would have
+    named one are stripped (Orca 1.4.273: `no_active_sender_terminal`). It is created in the background, not focused. A worktree made with git is not known to Orca
+    at once, so a `selector_not_found` is retried as `start` does."""
+    got = _discover(lambda: result("terminal", "create", "--worktree", "path:" + path, "--title", title), "orca never discovered the worktree %s" % path)
+    handle = _first(got, ("handle",))
+    if not handle:
+        raise OrcaError("orca terminal create named no handle: %s" % json.dumps(got)[:200])
+    return handle
+
+
+def start(run, spec_file, model, worktree, sender, title=None):
+    """`worker-start` in `worktree`, once Orca knows it: Orca discovers a worktree made with git only after a while (`selector_not_found` until then),
+    so ask `worktree show` and retry a `selector_not_found` of `worker-start` for DISCOVER_S; past that, OrcaError naming the worktree."""
+    args = ("orchestration", "worker-start", "--spec-file", spec_file, "--run", run, "--agent", "claude", "--model", model,
+            "--worktree", "path:" + worktree, "--from", sender) + (("--task-title", title) if title else ())
+
+    def attempt():
+        result("worktree", "show", "--worktree", "path:" + worktree)
+        return result(*args)
+    got = _discover(attempt, "orca never discovered the worktree %s" % worktree)
     dispatch = _first(got, ("dispatchId",))
     if not dispatch:
         raise OrcaError("orca worker-start named no dispatch: %s" % json.dumps(got)[:200])

@@ -11,7 +11,7 @@ agent waiting on a prompt), `hang` (never ends), `later` (running until the test
 `failed-report` and `question` (the executor's report says so) and `showfail` (worker-show fails). `release_fail: [unit]` makes `worker-release` of
 that unit's dispatches fail with an error object whose `message` is null. `orchestration run-create`, `worker-start` and `send` with no `--from` (and none of the session variables
 in its environment) fails with Orca 1.4.273's `no_active_sender_terminal`; `terminal create|show|close` keep `state.json["terminals"]`. `discover_after: N` makes Orca discover a worktree only after N `worktree show` calls on its path (the first N answer `selector_not_found`, as Orca 1.4.273 does for a worktree made with git that it has not
-found yet), and `close_sender_after: N` closes the sender terminal after the N-th `worker-start`, and a `worker-start` from a closed terminal, or one that is not the terminal the Run was created from,
+found yet), and `terminal_discover_after: N` makes the first N `terminal create` calls answer `selector_not_found`, and `close_sender_after: N` closes the sender terminal after the N-th `worker-start`, and a `worker-start` from a closed terminal, or one that is not the terminal the Run was created from,
 answers `consumer_fenced`; `start_not_found: M` makes the first M `worker-start`s on a worktree answer `selector_not_found` even when `show` knows it; with `discover_after` set, `worker-start` on a worktree that is not yet discovered answers `selector_not_found`
 too (neither set: every worktree is known at once, as before).
 Orchestrator steering (Orca 1.4.273, live probe): a worker's `worker_done` and a worker's `question` land in the run's inbox (`state.json["inbox"]`); `orchestration check
@@ -210,6 +210,10 @@ def main(argv):
         done_log(show=wt)
         say({"worktree": {"path": wt}})
     if argv[:2] == ["terminal", "create"]:
+        state["term_tries"] = state.get("term_tries", 0) + 1
+        if state["term_tries"] <= behave.get("terminal_discover_after", 0):  # a worktree made with git that Orca has not discovered yet
+            done_log(refused="selector_not_found", terminal_try=flag(argv, "--worktree"))
+            say(rc=1, error={"code": "selector_not_found", "message": "No workspace matches --worktree %s." % flag(argv, "--worktree")})
         state["n_terms"] = state.get("n_terms", 0) + 1
         handle = "term_%d" % state["n_terms"]
         state.setdefault("terminals", {})[handle] = {"title": flag(argv, "--title"), "worktree": flag(argv, "--worktree"), "open": True}
@@ -287,7 +291,7 @@ def main(argv):
         sender = need_sender()
         state["runs"] += 1
         state.setdefault("bound", {})["run_%d" % state["runs"]] = sender  # a Run is bound to the terminal that made it (Orca 1.4.273)
-        done_log(sender=sender)
+        done_log(sender=sender, objective=flag(argv, "--objective"))
         say({"run": {"id": "run_%d" % state["runs"], "objective": flag(argv, "--objective")}})
     if argv[:2] == ["orchestration", "worker-start"]:
         frm, bound = flag(argv, "--from"), state.get("bound", {}).get(flag(argv, "--run"))

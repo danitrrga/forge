@@ -10,11 +10,11 @@ const SESSION = JSON.stringify({ project: 'atlas', phase_dir: '/srv/atlas/.fwx/m
   stage: 'executing', part: 1, parts: 2, branch: 'fwx/a', progress: 0.5 })
 
 /** A folder holding a `fwx` that prints `session` for `session --json` (exit 1, as with no phase, when `exit1`) and PHASES for
- *  `phase list`, and records the folder it ran in. PATH is only that folder for the duration of `fn`. */
-async function withFwx(session: string, fn: (calls: string) => Promise<void>, exit1 = false): Promise<void> {
+ *  `phase list`, `waves` for `wave list --json` (a failure with no output when null, as an fwx that has no such flag), and records the folder it ran in. PATH is only that folder for the duration of `fn`. */
+async function withFwx(session: string, fn: (calls: string) => Promise<void>, exit1 = false, waves: string | null = null): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'fwx-plugin-test-'))
   const calls = join(dir, 'calls')
-  const script = `#!/bin/sh\necho "$(pwd) $*" >> '${calls}'\ncase "$1" in\n session) printf '%s' '${session}'; ${exit1 ? 'exit 1' : 'exit 0'};;\n phase) printf '%s' '${PHASES}';;\nesac\n`
+  const script = `#!/bin/sh\necho "$(pwd) $*" >> '${calls}'\ncase "$1" in\n session) printf '%s' '${session}'; ${exit1 ? 'exit 1' : 'exit 0'};;\n phase) printf '%s' '${PHASES}';;\n wave) ${waves === null ? 'exit 2' : `printf '%s' '${waves}'`};;\nesac\n`
   writeFileSync(join(dir, 'fwx'), script)
   chmodSync(join(dir, 'fwx'), 0o755)
   const was = process.env.PATH
@@ -129,4 +129,59 @@ test('the open command never throws when Orca\'s CLI is not where expected', asy
     assert.ok(w.logs.some((l) => l.includes('opening the panel failed')), w.logs.join('|'))
     await w.deactivate()
   })
+})
+
+const RUNS = JSON.stringify({ runs: [{
+  run: 'r-1', part: '01.1-x', branch: 'fwx/a', state: 'active', pid: 1, alive: true, step: 'wave 1', started: 5, orca_run: 'run_1',
+  waves: [{ n: 1, tasks: ['T1'] }], workers: [{ unit: 'T1', role: 'executor', state: 'running', released: false, line: null }], events: ['worker T1 started'], result: null
+}] })
+
+test('a live wave run is read with `wave list --json` in the workspace and shown in the chip, the tooltip and the snapshot', async () => {
+  await withFwx(SESSION, async (calls) => {
+    const h = host([WS])
+    const w = await mountWorker(main, { host: h })
+    const shot = (await w.request('session.get')).snapshot as { activeRun: { run: string } | null }
+    const last = updates(h).at(-1)!
+    assert.equal(shot.activeRun!.run, 'r-1')
+    assert.equal(last.text, 'atlas · 01.1-x · wave 1 (1/1)')
+    assert.equal(last.tone, 'accent')
+    assert.match(String(last.tooltip), /^Workflow 01\.1-x \(wave 1\) · /)
+    const ran = (await import('node:fs')).readFileSync(calls, 'utf8')
+    assert.match(ran, new RegExp(`^${tmpdir()} wave list --json$`, 'm'))
+    assert.deepEqual(w.refusals, [])
+    await w.deactivate()
+  }, false, RUNS)
+})
+
+test('a live run lights the chip when no phase is bound; without one the chip is neutral', async () => {
+  const none = JSON.stringify({ project: 'atlas', phase_dir: null, milestone: null, subproject: null, stage: null, part: null, parts: null, branch: null, progress: null })
+  await withFwx(none, async () => {
+    const h = host([WS])
+    const w = await mountWorker(main, { host: h })
+    await w.request('session.get')
+    assert.equal(updates(h).at(-1)!.text, 'atlas · 01.1-x · wave 1 (1/1)')
+    assert.equal(updates(h).at(-1)!.tone, 'accent')
+    await w.deactivate()
+  }, true, RUNS)
+  await withFwx(none, async () => {
+    const h = host([WS])
+    const w = await mountWorker(main, { host: h })
+    await w.request('session.get')
+    assert.equal(updates(h).at(-1)!.text, 'atlas · no phase')
+    assert.equal(updates(h).at(-1)!.tone, 'neutral')
+    await w.deactivate()
+  }, true, JSON.stringify({ runs: [] }))
+})
+
+test('an fwx with no `wave list --json` (it fails) leaves the chip as it was, and garbage is no run', async () => {
+  for (const waves of [null, 'garbage']) {
+    await withFwx(SESSION, async () => {
+      const h = host([WS])
+      const w = await mountWorker(main, { host: h })
+      const shot = (await w.request('session.get')).snapshot as { activeRun: unknown }
+      assert.equal(shot.activeRun, null)
+      assert.equal(updates(h).at(-1)!.text, 'atlas · 01-a · executing · ▰▰▰▰▱▱▱▱')
+      await w.deactivate()
+    }, false, waves)
+  }
 })
