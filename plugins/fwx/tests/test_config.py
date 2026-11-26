@@ -147,6 +147,33 @@ s.ok("an alias the engine knows is accepted (fable)", isinstance(cfg, dict), str
 for alias in ("sonnet", "opus", "haiku", "fable"):
     s.ok("%s is an alias" % alias, alias in config.ALIASES)
 
+# --- a generated file that still names the retired `state` role (the other projects' files, until `forge sync --apply` rewrites
+# them) loads: the role is dropped on read, from `models` and from `limits.per_project`, and `fwx model` answers for the others
+# while it refuses `state` as an unknown role.
+# Seen red with `state` out of ROLES and no retired list:
+#   FAIL: a file whose models hold the retired `state` role is a ConfigError: ...: unknown role 'state' in models (roles: ...)
+old_state = helpers.toy_repo()
+put(old_state, {"schema": 1, "models": {"state": {"small": "haiku"}, "executor": {"small": "haiku"}},
+                "limits": {"per_project": {"state": 2, "executor": 2}}})
+cfg_state, _ = load(old_state)
+s.ok("a file whose models hold the retired `state` role loads", isinstance(cfg_state, dict), "load raised: %s" % cfg_state)
+if isinstance(cfg_state, dict):
+    s.ok("the retired role is dropped from models", "state" not in cfg_state["models"], "models: %s" % sorted(cfg_state["models"]))
+    s.eq("the other roles of that file are read", config.model(cfg_state, "executor", "small"), "haiku")
+    s.eq("`fwx model planner normal` answers", config.model(cfg_state, "planner", "normal"), "opus")
+    s.eq("the retired role is dropped from limits.per_project", config.cap(cfg_state, "executor"), 2)
+    s.ok("limits.per_project holds no `state`", "state" not in cfg_state["limits"]["per_project"], str(cfg_state["limits"]))
+    try:
+        config.model(cfg_state, "state", "small")
+        s.ok("model(state, small) raises", False, "returned")
+    except config.ConfigError as e:
+        s.ok("model(state, small): the unknown-role line", "unknown role 'state'" in str(e), str(e))
+r = helpers.fwx(old_state, "model", "planner", "normal")
+s.eq("fwx model planner normal answers on that file", (r.returncode, r.stdout, r.stderr), (0, "opus\n", ""))
+r = helpers.fwx(old_state, "model", "state", "small")
+s.ok("fwx model state small exits 2 with the unknown-role line",
+     r.returncode == 2 and r.stderr.startswith("fwx model: unknown role 'state' (roles: "), repr((r.returncode, r.stderr)))
+
 # --- outside a git repo
 outside = helpers.mkdtemp_nogit()
 cfg, _ = load(outside)
@@ -165,7 +192,8 @@ except config.ConfigError:
 
 # --- roles, sizes, model()
 s.eq("sizes", config.SIZES, ("small", "normal", "big"))
-s.eq("22 roles", len(config.ROLES), 22)
+s.eq("21 roles", len(config.ROLES), 21)
+s.ok("`state` is no role", "state" not in config.ROLES)
 for role in ("orchestrator", "pre-mortem", "planner", "executor", "review-verifier", "ui-walker", "vision", "runner"):
     s.ok("role %s" % role, role in config.ROLES)
 s.eq("the seed has every role and size", sorted((r, z) for r in config.ROLES for z in config.SIZES),
@@ -176,10 +204,9 @@ cfg = config.DEFAULTS
 s.eq("seed: planner is opus", config.model(cfg, "planner", "normal"), "opus")
 s.eq("seed: pre-mortem is sonnet", config.model(cfg, "pre-mortem", "normal"), "sonnet")
 s.eq("seed: detector is haiku", config.model(cfg, "detector", "normal"), "haiku")
-for role in ("decisions", "state"):
-    s.ok("seed: %s is haiku at every size" % role,
-         all(config.model(cfg, role, z) == "haiku" for z in config.SIZES),
-         "got %r" % [config.model(cfg, role, z) for z in config.SIZES])
+s.ok("seed: decisions is haiku at every size",
+     all(config.model(cfg, "decisions", z) == "haiku" for z in config.SIZES),
+     "got %r" % [config.model(cfg, "decisions", z) for z in config.SIZES])
 s.ok("seed: planner is opus at every size", all(config.model(cfg, "planner", z) == "opus" for z in config.SIZES))
 s.eq("seed: executor is sonnet", config.model(cfg, "executor", "big"), "sonnet")
 s.eq("seed: runner is haiku at every size", [config.model(cfg, "runner", z) for z in config.SIZES], ["haiku"] * 3)

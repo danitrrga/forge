@@ -231,15 +231,12 @@ s.eq("subphases of a phase with none", state.subphases(mk(pdir, "12.3-c")), [])
 # ---- phase_paths ------------------------------------------------------------------------------------------------------
 pp = state.phase_paths(x)
 s.eq("phase_paths keys", sorted(pp), sorted(["context", "decisions", "research", "demo", "premortem", "plan", "postmortem",
-                                              "state", "audit", "next_report"]))
+                                              "audit"]))
 s.eq("phase_paths names", {k: os.path.basename(str(v)) for k, v in pp.items()},
      {"context": "context.md", "decisions": "decisions.tsv", "research": "research", "demo": "demo",
-      "premortem": "premortem.md", "plan": "plan.md", "postmortem": "postmortem.md", "state": "state.md",
-      "audit": "audit.tsv", "next_report": "report-1.md"})
+      "premortem": "premortem.md", "plan": "plan.md", "postmortem": "postmortem.md",
+      "audit": "audit.tsv"})
 s.ok("phase_paths values are Paths inside the folder", all(os.path.dirname(str(v)) == x for v in pp.values()))
-helpers.write(x, "report-1.md", "r\n")
-helpers.write(x, "report-3.md", "r\n")
-s.eq("next_report is the first free number", os.path.basename(str(state.phase_paths(x)["next_report"])), "report-2.md")
 s.ok("phase_paths creates nothing", not os.path.exists(os.path.join(x, "context.md")))
 
 # ---- append_row / read_rows, the cell cleaning ----------------------------------------------------------------------
@@ -636,47 +633,11 @@ cs = state.new_phase("w", subproject="web", cwd=cm)
 state.cancel_phase(cs)
 s.ok("cancel_phase works inside a subproject", not os.path.exists(str(cs)) and os.path.isdir(os.path.join(cm, ".fwx", "subprojects", "web")))
 
-# ---- check_state -------------------------------------------------------------------------------------------------------
-kd = helpers.mkdtemp("fwx-check-")
-helpers.write(kd, "state.md", "# State\n" + "line\n" * 99)  # 100 lines
-s.eq("check_state: 100 lines is on target", state.check_state(os.path.join(kd, "state.md")), ([], []))
-helpers.write(kd, "state.md", "# State\n" + "line\n" * 111)  # 112 lines
-s.eq("check_state: 112 lines warns, no error", state.check_state(os.path.join(kd, "state.md")), ([], ["112 lines, target 100"]))
-errs, _ = state.check_state(os.path.join(kd, "missing.md"))
-s.ok("check_state: a missing file is an error", len(errs) == 1 and "missing.md" in errs[0], str(errs))
-helpers.write(kd, "empty.md", "\n\n")
-s.ok("check_state: an empty state.md is an error", len(state.check_state(os.path.join(kd, "empty.md"))[0]) == 1)
-
-# ---- check_report ------------------------------------------------------------------------------------------------------
-rd = helpers.mkdtemp("fwx-report-")
-SHA = "0123456789abcdef0123456789abcdef01234567"
-state.append_audit(rd, "evidence", "old run", rc=0, sha="f" * 40)
-state.append_audit(rd, "evidence", "pytest -q", rc=0, sha=SHA)
-state.append_audit(rd, "round", "review")
-report = os.path.join(rd, "report-1.md")
-helpers.write(rd, "report-1.md", "# Report 1\n\n## Evidence\nCommit `%s`, pytest -q, exit 0.\n" % SHA)
-s.eq("check_report: the full sha of the last evidence row passes", state.check_report(report), ([], []))
-helpers.write(rd, "report-1.md", "# Report 1\n\n## Evidence\nCommit `%s`, pytest -q, exit 0.\n" % SHA[:7])
-s.eq("check_report: an abbreviated sha (7 chars) passes", state.check_report(report), ([], []))
-helpers.write(rd, "report-1.md", "# Report 1\n\n## Evidence\nCommit `%s`, an older run.\n" % ("f" * 40))
-errs, warns = state.check_report(report)
-s.ok("check_report: the sha of an older evidence row is not the last one (report without evidence sha passed)", len(errs) == 1 and "0123456" in errs[0], str(errs))
-helpers.write(rd, "report-1.md", "# Report 1\n\nDone.\n")
-errs, warns = state.check_report(report)
-s.ok("check_report: a report without the evidence sha is an error (report without evidence sha passed)", len(errs) == 1, str(errs))
-helpers.write(rd, "report-1.md", "# Report\n" + "Commit %s\n" % SHA + "line\n" * 39)  # 41 lines
-s.eq("check_report: 41 lines is a warning, not an error", state.check_report(report), ([], ["41 lines, target 40"]))
-helpers.write(rd, "report-1.md", "# Report\n" + "Commit %s\n" % SHA + "line\n" * 38)  # 40 lines
-s.eq("check_report: 40 lines is on target", state.check_report(report), ([], []))
-nr = helpers.mkdtemp("fwx-noaudit-")
-helpers.write(nr, "report-1.md", "# Report\nCommit %s\n" % SHA)
-s.ok("check_report: no audit.tsv, so no evidence to cite: an error", len(state.check_report(os.path.join(nr, "report-1.md"))[0]) == 1)
-state.append_audit(nr, "round", "review")
-s.ok("check_report: audit.tsv with no evidence row: an error", len(state.check_report(os.path.join(nr, "report-1.md"))[0]) == 1)
-s.ok("check_report: a missing report is an error", len(state.check_report(os.path.join(nr, "report-9.md"))[0]) == 1)
-state.append_audit(rd, "evidence", "later", rc=1, sha="b" * 40)
-helpers.write(rd, "report-1.md", "# Report\nCommit %s\n" % SHA)
-s.ok("check_report: a newer evidence row makes the old sha stale", len(state.check_report(report)[0]) == 1)
+# ---- the lint of state.md and of a report is gone ---------------------------------------------------------------------------
+# The orchestrator writes the report itself, so no file is linted. Red before: `state.check_state` and `state.check_report` existed.
+s.ok("state.py has no check_state, check_report, STATE_LINES or REPORT_LINES",
+     not any(hasattr(state, n) for n in ("check_state", "check_report", "STATE_LINES", "REPORT_LINES", "_length_warning")),
+     "present: %s" % [n for n in ("check_state", "check_report", "STATE_LINES", "REPORT_LINES", "_length_warning") if hasattr(state, n)])
 
 # ---- the templates ------------------------------------------------------------------------------------------------------
 state._read_template = _real_read_template
