@@ -28,6 +28,9 @@ Seen red on copies of the real texts (a copy of plugins/fwx with the pinned word
     FAIL: demo.md tells the agent to read verdict_tool and verdict_command from fwx discuss --json when its prompt lacks them -> agents/demo.md has no line with 'fwx discuss --json' and both keys
   lib/fwx/commands/discuss.py, '"verdict_command"' -> '"verdict_cmd"':
     FAIL: fwx discuss --json prints the keys verdict_tool and verdict_command that step 7 and demo.md name -> lib/fwx/commands/discuss.py has no such key
+  agents/demo.md unchanged from before the demo loaded the design skills (no Skill in tools, step 2 "You have no Skill tool"):
+    FAIL: demo.md's tools include Skill -> agents/demo.md: 'tools: Read, Grep, Glob, Bash, Write'
+    FAIL: demo.md step 2 loads the design skills with the Skill tool and the Return names the ones loaded -> step 2: '... You have no Skill tool, so read their `SKILL.md`.' ; Return names loaded skills: False
 Each kept check has a control on a toy: the good toy passes, then one change makes its check fail.
 """
 import json
@@ -158,6 +161,15 @@ check("fwx discuss --json prints the keys verdict_tool and verdict_command that 
 gets = [l for l in demo.splitlines() if "fwx discuss --json" in l and "`verdict_tool`" in l and "`verdict_command`" in l]
 check("demo.md tells the agent to read verdict_tool and verdict_command from fwx discuss --json when its prompt lacks them",
       len(gets) == 1, "agents/demo.md has no line with 'fwx discuss --json' and both keys")
+# the demo builds figures that look like the app: it loads the design skills with the Skill tool (a nameless skimming of their files left its
+# prototypes generic) and says in its Return which it loaded
+tools_line = next((l for l in demo.splitlines() if l.startswith("tools:")), "")
+check("demo.md's tools include Skill", "Skill" in [t.strip() for t in tools_line[len("tools:"):].split(",")], "agents/demo.md: %r" % tools_line)
+step2 = step(demo, 2)
+check("demo.md step 2 loads the design skills with the Skill tool and the Return names the ones loaded",
+      "Skill tool" in step2 and "load" in step2.lower() and "design" in step2.lower() and "no Skill tool" not in step2
+      and "loaded" in demo.split("## Return", 1)[-1],
+      "step 2: %r; Return names loaded skills: %s" % (step2[-120:], "loaded" in demo.split("## Return", 1)[-1]))
 for name, detail in problems(files, demo):
     check(name, False, detail)
 
