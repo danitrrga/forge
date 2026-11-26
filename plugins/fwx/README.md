@@ -14,7 +14,7 @@ python3 bin/fwx statusline    # the status-bar line
 python3 bin/fwx phase new <slug>    # the next phase folder, the session bound to it; `phase list` shows them, `phase remove <dir>` deletes one whose discuss was cancelled; `session attach <phase dir>` binds the session to one
 python3 bin/fwx subphase new <phase dir> <slug>    # the next subphase folder of a phase
 python3 bin/fwx milestone new [vN]    # the next milestone of a scope
-python3 bin/fwx decision new --decision T --why T --support S    # a row in the phase's decisions.tsv (`--adr`: the scope's adr.tsv); `decision list` reads them, `--grep TEXT` and `--all`
+python3 bin/fwx decision new --decision T --why T --support S    # a row in the phase's decisions.tsv (`--adr`: the scope's adr.tsv)
 python3 bin/fwx state lint <state.md>    # a state.md against its rules; exit 1 on an error
 python3 bin/fwx report lint <report.md>    # a phase report against its rules, the same way
 python3 bin/fwx session    # the session's phase; `fwx --help` lists every command, grouped by object

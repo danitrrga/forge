@@ -4,7 +4,7 @@ The one table. `bin/fwx` reads it to route, to list and to refuse an old name; n
 It is data and imports nothing, so a command that is asked for loads only its own module.
 
 A row is (new name, old name, module, handler arguments, help):
-  - new name: the words after `fwx`. An object alone (`wave`, `linear`, `context`, `session`, `decision`) is the object's default
+  - new name: the words after `fwx`. An object alone (`wave`, `linear`, `session`) is the object's default
     verb. A word starting with `--` makes the row apply only when that flag is among the arguments (`linear list --waiting`);
     the flag is not passed on.
   - old name: what the command was called before the grammar (None: it did not change). It is refused: exit 2 and one line,
@@ -32,7 +32,6 @@ ROWS = [
     ("subphase new", "state new-subphase", "state", ["new-subphase"], "make the next subphase folder of a phase"),
     ("milestone new", "state new-milestone", "state", ["new-milestone"], "make the next milestone (or vN) of a scope"),
     ("decision new", "state decision", "state", ["decision"], "add a row to the phase's decisions.tsv, or with --adr to the scope's adr.tsv"),
-    ("decision list", "state decisions", "state", ["decisions"], "the rows of a decisions.tsv in force (or --all), or those a topic touches (--grep)"),
     ("state lint", "state check state", "state", ["check-state"], "lint a state.md: an error for a rule, a WARN line for a length"),
     ("report lint", "state check report", "state", ["check-report"], "lint a phase report: an error for a rule, a WARN line for a length"),
     # the plan
@@ -85,7 +84,7 @@ OLD_EXTRA = {("state", "check"): "'fwx state lint' or 'fwx report lint'",
 LEADING = {"linear": ("--project",)}
 # The verb that `fwx OBJECT` alone runs, for an object whose default is one of its verbs (an object with a row of its own, such as
 # `wave` or `session`, is that row's default).
-DEFAULTS = {"decision": "list", "linear": "list"}
+DEFAULTS = {"linear": "list"}
 # The one module whose handlers print their own argparse help for `-h` and `--help` after a verb: `route` leaves them that. For every
 # other module the router answers with the object's table, so no handler runs (and none needs a key, a project or a configuration).
 OWN_HELP = "state"
