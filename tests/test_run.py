@@ -70,6 +70,7 @@ say so when they cannot run: the `--cwd` that cannot be entered (a process that 
 the run exited 1 with "FAIL control orphan: the mutant did not fail the case '10: forge run killed' (it failed: [])" (shown with
 sys.platform set to darwin, one mutant: old rc=1, new rc=77). The timed-out child's checks now require a dump (`d is not None and not alive`).
 """
+import contextlib
 import json
 import os
 import shutil
@@ -481,7 +482,8 @@ def cases(mutate=None):
         finally:
             for pid in (proc and proc.pid, (jload(read(out) or "") or {}).get("pid")):
                 if pid and alive(pid):
-                    os.kill(pid, signal.SIGKILL)
+                    with contextlib.suppress(ProcessLookupError):  # the child may end between alive() and the kill (seen on CI)
+                        os.kill(pid, signal.SIGKILL)
             if proc:
                 proc.wait()
         proc, out = None, None
@@ -502,7 +504,8 @@ def cases(mutate=None):
         finally:
             for pid in (proc and proc.pid, (jload(read(out) or "") or {}).get("pid")):
                 if pid and alive(pid):
-                    os.kill(pid, signal.SIGKILL)
+                    with contextlib.suppress(ProcessLookupError):  # the child may end between alive() and the kill (seen on CI)
+                        os.kill(pid, signal.SIGKILL)
             if proc:
                 proc.wait()
         if sys.platform.startswith("linux"):
@@ -522,7 +525,8 @@ def cases(mutate=None):
                 want("10: forge run killed with SIGKILL: the child does not outlive it", bool(pid) and wait_for(lambda: not alive(pid), 30), True)
             finally:
                 if pid and alive(pid):
-                    os.kill(pid, signal.SIGKILL)
+                    with contextlib.suppress(ProcessLookupError):  # the child may end between alive() and the kill (seen on CI)
+                        os.kill(pid, signal.SIGKILL)
         else:
             NOT_ARMED.add("the parent-death case needs Linux (prctl PR_SET_PDEATHSIG)")
         code, so, se, d = run(["--help"])

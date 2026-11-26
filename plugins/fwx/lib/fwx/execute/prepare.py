@@ -34,8 +34,8 @@ starts where the last stopped) runs nothing: the checks of a large project take 
 check is RedBase: needs-owner, no round spent, no row. A check killed by its time limit (`project.check_timeout_s`, default `verify.CHECK_TIMEOUT_S`) proved nothing, red
 or green: it is NotRun, a machine condition with its own exit and no row, unless another check of the recipe is red, which is RedBase.
 
-What else it works out: the run id `<part>-<sha7>-<n>` (n counts the runs of that base already made in the git common
-dir); the tasks already done (a commit reachable from the phase branch whose trailer says `Fwx-Task: <part>/<task>`); each
+What else it works out: the run id `<part>-<sha7>-<n>` (n is the first number of that base whose folder is free in the git common
+dir: the folder is made at once, so two runs never share one, and a refused run removes it); the tasks already done (a commit reachable from the phase branch whose trailer says `Fwx-Task: <part>/<task>`); each
 wave's `serial` and `plan_failures` for tasks of one wave that write the same path or one inside the other (plan._clashes,
 which `load_plan` leaves to its caller); and a model for every role, from the configuration.
 
@@ -55,6 +55,7 @@ shape of plan C.5 (execute/brief.py `finding_problems`), or the rows of a walk's
 
 Imports the standard library (shutil: `need_orca` looks for `orca` on PATH), fwx.plan, plan_form, plan_step, state, config, core.ci_gate, core.evidence, core.rounds, core.verify and execute.base, execute.brief and execute.worktree_setup.
 """
+import itertools
 import json
 import os
 import re
@@ -226,10 +227,20 @@ def _part_base(top, branch, part_name):
 
 
 def _run_id(top, part_name, base):
+    """The part's next run id at `base`, with its folder made: `os.mkdir` creates or fails, so two runs of one part at one base never share a number,
+    and a number another run took, or one whose folder is left, is skipped. A folder with no `state.json` is no run to `wave list`."""
     prefix = "%s-%s-" % (part_name, base[:7])
     runs = os.path.join(config.fwx_dir(top), "runs")
-    made = [d for d in os.listdir(runs) if d.startswith(prefix)] if os.path.isdir(runs) else []
-    return "%s%d" % (prefix, len(made) + 1)
+    try:
+        os.makedirs(runs, exist_ok=True)
+        for n in itertools.count(1):
+            try:
+                os.mkdir(os.path.join(runs, "%s%d" % (prefix, n)))
+                return "%s%d" % (prefix, n)
+            except FileExistsError:
+                continue
+    except OSError as e:
+        raise WaveError("cannot make the run folder in %s: %s" % (runs, e))
 
 
 def _findings(path, flag):
@@ -331,7 +342,8 @@ def _base_is_green(top, base, recipe, folders, say, timeout, part=None, cfg=None
         return None
     if ci_gate.base_green(top, base, say, cfg):
         return []
-    results = [verify.run_check(c, top, timeout) for c in recipe]
+    with verify.gate_lock(top):  # one recipe at a time per project, as `fwx verify` does: two at once fail each other on load; `prepare` refuses an empty recipe
+        results = [verify.run_check(c, top, timeout) for c in recipe]
     red = [r for r in results if r["rc"] != 0 and not r["timed_out"]]
     late = [r for r in results if r["timed_out"]]
     if not red and late:
@@ -364,21 +376,32 @@ def _remember(part, base, recipe, folders, cfg):
     state.append_audit(part, "evidence", detail=json.dumps(ev), rc=0, sha=base)
 
 
-def _write(made, folder, claim):
-    """The briefs of a run: what `prepare` writes, once everything else has passed. With `claim` the run's folder is made even
-    with no brief (a `--from gate` run launches none), so that the next run of the base gets the next number."""
-    if not made and not claim:
-        return
+def _write(made, folder):
+    """The briefs of a run, written once everything else has passed, into the folder `_run_id` made."""
     try:
-        os.makedirs(folder, exist_ok=True)
         for facts, text in made.values():
             brief.put(facts["brief"], text)
     except OSError as e:
         raise WaveError("cannot write the briefs of the run in %s: %s" % (folder, e))
 
 
-def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=None, revert=None, control_findings=None,
-            start=None, environ=None, say=lambda line: None):
+def prepare(*args, **kw):
+    """`_prepare`, and a run it refuses (a red base, a bad flag) gives back the folder `_run_id` claimed: an empty folder would take a number
+    the next run then skips. `rmdir` leaves a folder that holds briefs."""
+    claimed = []
+    try:
+        return _prepare(*args, claimed=claimed, **kw)
+    except BaseException:
+        for folder in claimed:
+            try:
+                os.rmdir(folder)
+            except OSError:
+                pass
+        raise
+
+
+def _prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=None, revert=None, control_findings=None,
+             start=None, environ=None, say=lambda line: None, claimed=None):
     environ = os.environ if environ is None else environ
     if plane not in PLANES:
         raise WaveError("--plane is %r, not one of %s" % (plane, ", ".join(PLANES)))
@@ -442,6 +465,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     run = _run_id(top, name, base)
     size = data["size"]["tag"]
     folder = brief.folder_of(config.fwx_dir(top), run)
+    claimed.append(folder)
     ctx = {"run": run, "part": name, "folder": folder,
            "paths": {"context": str(owner["context"]), "decisions": str(owner["decisions"]),
                      "plan": str(paths["plan"])}}
@@ -457,7 +481,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     if not gating and red is None:
         _unmoved(top, base)
         _remember(part, base, recipe, {part, phase}, cfg)
-    _write(made, folder, gating)
+    _write(made, folder)
     if not gating and not revert and not fixing and tasks and len(_done(top, branch, name, tasks)) == len(tasks):
         say("every task is already on %s: `execute` has nothing to run; to run the gate and the review on it: "
             "fwx wave new --part-dir %s --plane %s --branch %s --from gate" % (branch, shlex.quote(part_dir), plane, shlex.quote(branch)))

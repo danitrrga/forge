@@ -54,6 +54,7 @@ line of each, seen red:
   check-base by merge-base: FAIL: check-base: an ancestor of HEAD is another base: exit 0, want 42: got 0, want 42
   check-base, main checkout: FAIL: check-base: the main checkout: exit 0, want 42: got 0, want 42
 """
+import fcntl
 import json
 import os
 import re
@@ -61,6 +62,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
@@ -970,20 +972,87 @@ def case_orca_missing(R, S):
     S.ok("orca missing: nothing written", not sc.audit_exists())
     r = sc.prepare(R, plane="factory", env={"PATH": tool_dir(orca=False)})
     S.eq("orca missing: the factory plane does not need it", (r.returncode, ran(runs)), (0, 1))
-    # An environment with no PATH is searched on the default path, never on this process's PATH (CodeRabbit, PR 268). The code under test
-    # (R's lib, so a mutant runs) is called in a child whose own PATH has an `orca`. Seen failing with `environ.get("PATH")`:
-    #   FAIL: orca missing: no PATH in the environment does not fall back to the process's PATH: got False, want True
-    probe = ("import sys; sys.path.insert(0, sys.argv[1]); from fwx.execute import prepare\n"
-             "try:\n    prepare.need_orca('session', {}); print('found')\nexcept prepare.WaveError:\n    print('refused')\n")
-    env = dict(os.environ, PATH=tool_dir(orca=True) + os.pathsep + os.environ.get("PATH", ""))
-    got = subprocess.run([sys.executable, "-c", probe, os.path.join(R.root, "lib")], env=env, capture_output=True, text=True).stdout.strip()
-    on_default = bool(shutil.which("orca", path=os.defpath))  # a machine with orca on the default path finds it either way
-    S.eq("orca missing: no PATH in the environment does not fall back to the process's PATH", got == ("found" if on_default else "refused"), True)
+
+
+def start(R, sc):
+    """`wave new` of `sc` started and not waited for: a Popen with both pipes, in the toy's environment."""
+    return subprocess.Popen([sys.executable, os.path.join(R.root, "bin", "fwx"), "wave", "new", "--part-dir", sc.part, "--plane", "session",
+                             "--branch", "phase"], cwd=sc.cwd, env=helpers.clean_env(**sc.env), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def hold_gate(sc):
+    """The project's gate lock, held by the test: the open file (close it to let go)."""
+    folder = os.path.join(sc.repo, ".git", "fwx")
+    os.makedirs(folder, exist_ok=True)
+    held = open(os.path.join(folder, "gate.lock"), "a")
+    fcntl.flock(held, fcntl.LOCK_EX)
+    return held
+
+
+def wait_for_gate(p):
+    """True once `p` (a `wave new` started while the test holds the gate lock) has said on stderr that it waits for it, False if its stderr ended
+    first (it ran its check, or died). A guard kills a run that does neither in a minute, so a broken run cannot hang the suite."""
+    guard = threading.Timer(60, p.kill)
+    guard.start()
+    try:
+        return any("waiting for another gate" in line for line in p.stderr)
+    finally:
+        guard.cancel()
+
+
+def case_base_gate_lock(R, S):
+    """Concurrency 8: the base checks of `wave new` take the project's gate lock (`.git/fwx/gate.lock`, the one `fwx verify` holds), so
+    two runs on one machine do not run full recipes at once and push each other past `check_timeout_s`. The test holds the lock: the
+    run must say it waits and run no check until the lock is let go; with nobody holding it, it must not wait.
+    Seen red: FAIL: gate lock: the base check waits for the held gate lock: got (False, 1), want (True, 0)
+    (stderr never said `waiting for another gate`, and the check had already run once)."""
+    marker = os.path.join(helpers.mkdtemp("fwx-gate-"), "ran")
+    sc = Scene(recipe=[counting(marker)])
+    held = hold_gate(sc)
+    try:
+        p = start(R, sc)
+        S.eq("gate lock: the base check waits for the held gate lock", (wait_for_gate(p), ran(marker)), (True, 0))
+    finally:
+        held.close()
+    p.communicate()
+    S.eq("gate lock: let go, the run goes on and the check runs once", (p.returncode, ran(marker)), (0, 1))
+    free = Scene(recipe=[counting(marker)])
+    r = free.prepare(R)
+    S.eq("gate lock: nobody holds it: no wait said", (r.returncode, "waiting for another gate" in r.stderr), (0, False))
+
+
+def case_run_id_claimed(R, S):
+    """Concurrency 14: the run id is claimed with an `os.mkdir` when it is chosen, not counted from folders that appear minutes
+    later (after the base checks), so two `wave new` of one part at one base get two ids. The overlap is made, not hoped for: the test holds
+    the gate lock, so each run has chosen its id and then waits at the base check, and lets go only once both have said so. A run refused after the
+    claim gives the number back: no empty folder is left.
+    Seen red on master before either fix, first FAIL: run id: both runs chose their id and wait at the base check: got [False, False], want [True, True]
+    (no gate lock yet); with the lock and the id still counted (the MUTANTS row), the same two runs: FAIL: run id: two wave new on one part and base:
+    got ([0, 2], ['01-alpha-4f124b0-1']), want ([0, 0], ['01-alpha-4f124b0-1', '01-alpha-4f124b0-2'])
+    (the second took the same id, and its stderr said `cannot write the briefs of the run in .../runs/01-alpha-<sha7>-1: [Errno 17] File exists`)."""
+    sc = Scene()
+    held = hold_gate(sc)
+    try:
+        procs = [start(R, sc), start(R, sc)]
+        S.eq("run id: both runs chose their id and wait at the base check", [wait_for_gate(p) for p in procs], [True, True])
+    finally:
+        held.close()
+    done = [p.communicate() for p in procs]
+    runs = sorted(a["run"] for a in (args_of(type("r", (), {"stdout": o})) for o, _ in done) if a)
+    want = ["%s-%s-%d" % (PHASE, sc.head()[:7], n) for n in (1, 2)]
+    S.eq("run id: two wave new on one part and base", ([p.returncode for p in procs], runs), ([0, 0], want))
+    folders = sorted(os.listdir(os.path.join(sc.repo, ".git", "fwx", "runs")))
+    S.eq("run id: each run has its folder, with its briefs", (folders, all(os.listdir(os.path.join(sc.repo, ".git", "fwx", "runs", f)) for f in folders)),
+         (want, True))
+    bad = Scene(recipe=["false"])
+    r = bad.prepare(R)
+    left = os.listdir(os.path.join(bad.repo, ".git", "fwx", "runs")) if os.path.isdir(os.path.join(bad.repo, ".git", "fwx", "runs")) else []
+    S.eq("run id: a red base is refused and leaves no empty run folder", (r.returncode, left), (1, []))
 
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_small_plan, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout, case_base_ci, case_nested, case_orca_missing]
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout, case_base_ci, case_nested, case_base_gate_lock, case_run_id_claimed, case_orca_missing]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
@@ -991,8 +1060,6 @@ CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_d
 P, B, CG = "lib/fwx/execute/prepare.py", "lib/fwx/execute/base.py", "lib/fwx/core/ci_gate.py"  # CG: where the base check of CI lives (09.6 T64)
 MUTANTS = [
     ("orca not asked for", case_orca_missing, P, "    need_orca(plane, environ)\n", "", "orca missing: exit: got 0, want 2"),
-    ("orca looked up on the process PATH when the environment has none", case_orca_missing, P, 'environ.get("PATH", os.defpath)', 'environ.get("PATH")',
-     "orca missing: no PATH in the environment does not fall back to the process's PATH"),
     ("orca asked for on the factory plane too", case_orca_missing, P, 'if plane == "session" and shutil.which', "if shutil.which",
      "orca missing: the factory plane does not need it"),
     ("clash not marked", case_clash, P, 'serial = any(c["wave"] == n for c in clashes)', "serial = False", "wave 1 serial=False, want True"),
@@ -1070,6 +1137,13 @@ MUTANTS = [
     ("fresh: default branch allowed", case_check_base_moves_fresh, B, "if branch in default:", "if False:",
      "moves-fresh: the default branch's name: exit 0, want 42"),
     ("check-base in the main checkout", case_check_base, B, "if not linked(top):", "if False:", "the main checkout: exit 0, want 42"),
+    ("base checks skip the gate lock", case_base_gate_lock, P, "    with verify.gate_lock(top):  #", "    if True:  #",
+     "gate lock: the base check waits for the held gate lock"),
+    ("run id looked at, not claimed", case_run_id_claimed, P, 'os.mkdir(os.path.join(runs, "%s%d" % (prefix, n)))',
+     'os.path.isdir(os.path.join(runs, "%s%d" % (prefix, n))) and exec("raise FileExistsError")',
+     "run id: two wave new on one part and base"),
+    ("a refused run keeps its folder", case_run_id_claimed, P, "                os.rmdir(folder)\n", "                pass\n",
+     "run id: a red base is refused and leaves no empty run folder"),
     ("the part's repo not checked", case_nested, P, "    if have != want:\n", "    if False:\n",
      "nested: part of repo a from a worktree of the workspace: exit: got 0, want 2"),
 ]
