@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The two `forge doctor` checks added in docs/archive/unify-plan.md (steps 2 and 3), and the
+"""The two `forge doctor` checks added in docs/archive/unify-plan.md (steps 2 and 3, in the data history), and the
 row shape they needed. Each case builds its own world: nothing here reads or writes the real
 machine's projects, skills or HOME.
 
@@ -92,7 +92,7 @@ required "exit 2 without BLOCKED = ['PASS']"; frozen checked and "on": false wir
 = (['FAIL'], 'worktree guard frozen' / 'isoff')"; the probe run from the main checkout "a guarded project,
 entry in order = (['FAIL'] ...)".
 
-8. `skill names` skips frozen projects (docs/archive/orchestration-history.md decided it; a frozen project's audit). Seen
+8. `skill names` skips frozen projects (in the data history: docs/archive/orchestration-history.md decided it; a frozen project's audit). Seen
 failing on the code before it, 6 cases: "a seeded clash = ('WARN', 'skill names', 'a:gsd-fast, b:design-taste,
 fz:gsd-fast'), want ('WARN', 'skill names', 'a:gsd-fast, b:design-taste')", "a frozen project, by name = ('WARN',
 'skill names'), want ('SKIP', 'skill names')", "only a frozen project = ('WARN', 'skill names'), want ('FAIL',
@@ -407,7 +407,7 @@ def clash_cases(tmp):
 
     seeded = clash_world(tmp, "seeded", {"a": ["gsd-fast", "mine"], "b": ["design-taste"], "z": ["unrelated"], "fz": ["gsd-fast"]},
                          ["gsd-fast", "design-taste", "other"], frozen=("fz",))
-    # A frozen project is skipped (docs/archive/orchestration-history.md: a frozen project's own copies of a global
+    # A frozen project is skipped (in the data history: docs/archive/orchestration-history.md: a frozen project's own copies of a global
     # skill stopped warning); its divergence is the frozen drift row's. fz holds gsd-fast and is not named.
     want("a seeded clash", clashes(seeded),
          ("WARN", "skill names", "a:gsd-fast, b:design-taste"))

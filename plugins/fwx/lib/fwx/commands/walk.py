@@ -129,7 +129,7 @@ A capture path (`ab screenshot [<selector>] <path>`, `pw ... --filename <path>`)
 the run's folder or its captures folder; with no path the capture lands in the captures folder and its path is printed. `pw` sets Playwright's
 `outputDir` to the captures folder (so no `.playwright-cli/` reaches the project) and runs in it, except for the call that goes through a rig prefix.
 
-Measured by 3.5 U1 (framework-discuss/research/ui-walk/probe.md): the demo session enters by `cookies set <name> <value> --url <app>` (`--state`
+Measured by 3.5 U1 (in the data history: framework-discuss/research/ui-walk/probe.md): the demo session enters by `cookies set <name> <value> --url <app>` (`--state`
 and `state load` are rejected under `--allowed-domains`); only the command that launches the daemon goes through `run`, the others
 find it with AGENT_BROWSER_SOCKET_DIR; Playwright's CLI inside the rig is `npx --offline --no-install`; the browser is
 /usr/bin/google-chrome-stable through Omarchy's wrapper (it loads an extension and passes --ozone-platform=wayland); the key
