@@ -433,7 +433,7 @@ def layout_lines(paths):
     A deleted path, or the old side of a rename, is never checked: removing a bad name is how it is fixed.
     The plugin's lib absent is NOT ARMED; present but failing is a broken check and raises CheckError, never a pass."""
     fwx_dir = os.path.join(lib.ROOT, ".fwx")
-    held = [p for p in paths if p.startswith(".fwx/") and os.path.lexists(os.path.join(lib.ROOT, p))]
+    held = sorted(p for p in paths if p.startswith(".fwx/") and os.path.lexists(os.path.join(lib.ROOT, p)))
     if not held:
         return [], None
     plugin_lib = os.path.join(lib.ROOT, "plugins", "fwx", "lib")

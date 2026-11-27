@@ -1092,6 +1092,17 @@ def layout_cases():
         has("layout: %s" % label, out, ".fwx/Notes.md: upper-case letter or space in a name; belongs in")
         want("layout: %s = neither history moved" % label, (head(root), head(root, data=True)), (e0, d0))
     os.remove(os.path.join(root, ".fwx", "Notes.md"))
+    # Several bad paths are refused in the same order on every run, whatever the hash seed.
+    # Red with layout_lines walking the unsorted set: "layout: the refusal lines are sorted (PYTHONHASHSEED=1) = [...unsorted...], want [...sorted...]"
+    names = [".fwx/Bad%s.md" % c for c in "HGFEDCBA"]
+    for n in names:
+        write(root, n, "x\n")
+    for seed in ("1", "2", "3"):
+        code, out = run([sys.executable, os.path.join(root, "bin", "forge"), "commit", "--all", "-m", "m"], root, env=dict(ENV, PYTHONHASHSEED=seed))
+        got = [l.split(": ", 1)[0] for l in out.splitlines() if l.startswith(".fwx/Bad")]
+        want("layout: the refusal lines are sorted (PYTHONHASHSEED=%s)" % seed, got, sorted(names))
+    for n in names:
+        os.remove(os.path.join(root, n))
     # A good path, even beside a changed one outside .fwx/, commits.
     write(root, ".fwx/adr.tsv", "a\n")
     code, out = forge(root, "commit", "-m", "good", ".fwx/adr.tsv")
