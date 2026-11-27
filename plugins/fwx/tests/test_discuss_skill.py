@@ -423,24 +423,27 @@ for label, text, want in [("no call-out bullet", GOOD_PLAYBACK.replace("- **Call
 check("control: the real playback.md without its call-out bullet fails",
       [c for c, _ in playback_problems("\n".join(l for l in files["playback.md"].splitlines() if "Call outs" not in l))] == ["the playback calls out every agent-assumption and unexamined row"])
 
-# 01.2 fix g9: the discuss (step 6) has a researcher settle a fork with a small throwaway script outside the repo, so researcher.md must allow
-# that one probe beside its findings file and its read-only Bash. Seen red at 6728a51:
-#   FAIL: researcher.md allows a throwaway probe script outside the repo when its prompt asks for one -> no 'throwaway' and 'outside the repo' in the paragraph on the file it writes
+# 01.2 fix g9: the discuss (step 6) has a researcher settle a fork with a small throwaway script, so researcher.md must allow that one probe beside its
+# findings file and its read-only Bash. 01.2 fix r1-SO1: the probe's home is named, the `$TMPDIR` of a folder `fwx scratch new` made, never the repo or home.
+# Seen red at 135b134 (the old researcher.md says only "outside the repo"):
+#   FAIL: researcher.md allows a throwaway probe script in the scratch folder's TMPDIR, never in the repo, when its prompt asks for one -> no 'throwaway', 'scratch', 'never in the repo' and 'prompt asks' in the paragraph on the file it writes
 def researcher_problems(text):
     para = next((p for p in text.split("\n\n") if "the only file you write" in p or "only file" in p), "")
-    if not all(w in para for w in ("throwaway", "outside the repo", "prompt asks")):
-        return [("researcher.md allows a throwaway probe script outside the repo when its prompt asks for one",
-                 "no 'throwaway', 'outside the repo' and 'prompt asks' in the paragraph on the file it writes")]
+    if not all(w in para for w in ("throwaway", "`$TMPDIR` of a folder `fwx scratch new` made", "never in the repo", "prompt asks")):
+        return [("researcher.md allows a throwaway probe script in the scratch folder's TMPDIR, never in the repo, when its prompt asks for one",
+                 "no 'throwaway', 'scratch', 'never in the repo' and 'prompt asks' in the paragraph on the file it writes")]
     return []
 
 
 for name, detail in researcher_problems(read("agents", "researcher.md")):
     check(name, False, detail)
-GOOD_RESEARCHER = ("That is the only file you write, except a throwaway probe script outside the repo when your prompt asks for one; Bash is for commands "
+PROBE = "a throwaway probe script in the `$TMPDIR` of a folder `fwx scratch new` made, never in the repo or your home, when your prompt asks for one"
+GOOD_RESEARCHER = ("That is the only file you write, except " + PROBE + "; Bash is for commands "
                    "that change nothing.\n\nExtraction only.\n")
 check("control: the good researcher toy passes", researcher_problems(GOOD_RESEARCHER) == [])
-for label, text in [("no throwaway clause", GOOD_RESEARCHER.replace(", except a throwaway probe script outside the repo when your prompt asks for one", "")),
-                    ("a probe inside the repo", GOOD_RESEARCHER.replace("outside the repo", "in the repo")),
+for label, text in [("no throwaway clause", GOOD_RESEARCHER.replace(", except " + PROBE, "")),
+                    ("a probe inside the repo", GOOD_RESEARCHER.replace("never in the repo or your home", "in the repo")),
+                    ("a probe with no scratch home", GOOD_RESEARCHER.replace("in the `$TMPDIR` of a folder `fwx scratch new` made, never in the repo", "outside the repo, never in the repo")),
                     ("a probe nobody asked for", GOOD_RESEARCHER.replace("when your prompt asks for one", "whenever it likes"))]:
     check("control: " + label, len(researcher_problems(text)) == 1, "got %s" % researcher_problems(text))
 
