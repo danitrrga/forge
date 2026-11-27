@@ -234,6 +234,17 @@ def recall_problems(text, notice):
             out.append(("recall names " + label, "its text has no %r" % needle))
     if re.search(r"fwx session", text):
         out.append(("recall never runs fwx session", "its text names `fwx session`"))
+    # 01.2 fix g1: the plugin may be installed outside this repo, so the reentry path is `${CLAUDE_PLUGIN_ROOT}`-relative, as in every other fwx skill.
+    # Seen red at a8b3ec0:
+    #   FAIL: recall hardcodes no plugins/fwx/ path -> its text names a `plugins/fwx/` path that does not exist in another project
+    #   FAIL: recall reads reentry.md through ${CLAUDE_PLUGIN_ROOT} -> no `${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md`
+    #   FAIL: NOTICE names the ${CLAUDE_PLUGIN_ROOT} reentry path of recall -> its recall entry has no `${CLAUDE_PLUGIN_ROOT}`
+    if "plugins/fwx/" in text.replace("cursor/plugins", ""):
+        out.append(("recall hardcodes no plugins/fwx/ path", "its text names a `plugins/fwx/` path that does not exist in another project"))
+    if "${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md" not in text:
+        out.append(("recall reads reentry.md through ${CLAUDE_PLUGIN_ROOT}", "no `${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md`"))
+    if not any("${CLAUDE_PLUGIN_ROOT}" in b and "skills/recall" in b for b in re.split(r"\n\s*\n", notice)):
+        out.append(("NOTICE names the ${CLAUDE_PLUGIN_ROOT} reentry path of recall", "its recall entry has no `${CLAUDE_PLUGIN_ROOT}`"))
     return out
 
 
@@ -244,15 +255,19 @@ if os.path.exists(recall_path):
         check(name, False, detail)
 
 GOOD_RECALL = ("---\nname: recall\ndisable-model-invocation: true\n---\n<!-- copied-from: cursor/plugins pstack/skills/recall/SKILL.md @b7b93c36be9b -->\n"
-               "project.md adr.tsv milestone fwx phase list --json phase he names `git` `gh`\n")
-GOOD_NOTICE = "cursor/plugins, commit b7b93c36be9b\n  skills/recall/SKILL.md\n"
+               "project.md adr.tsv milestone fwx phase list --json phase he names `git` `gh`\n"
+               "${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md\n")
+GOOD_NOTICE = "cursor/plugins, commit b7b93c36be9b\n  skills/recall/SKILL.md reads `${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md`\n"
 check("control: the good recall toy passes", recall_problems(GOOD_RECALL, GOOD_NOTICE) == [])
 for label, text, notice, want in [
         ("no owner-only key", GOOD_RECALL.replace("disable-model-invocation: true\n", ""), GOOD_NOTICE, "recall is owner-only"),
         ("header without the commit", GOOD_RECALL.replace("@b7b93c36be9b", "@36885ea"), GOOD_NOTICE, "recall carries its copied-from header"),
         ("NOTICE without recall", GOOD_RECALL, "cursor/plugins, commit b7b93c36be9b\n", "NOTICE lists recall"),
         ("adr.tsv not named", GOOD_RECALL.replace("adr.tsv ", ""), GOOD_NOTICE, "recall names adr.tsv"),
-        ("fwx session named", GOOD_RECALL + "run `fwx session --json`\n", GOOD_NOTICE, "recall never runs fwx session")]:
+        ("fwx session named", GOOD_RECALL + "run `fwx session --json`\n", GOOD_NOTICE, "recall never runs fwx session"),
+        ("a hardcoded plugins/fwx path", GOOD_RECALL + "plugins/fwx/skills/discuss/references/reentry.md\n", GOOD_NOTICE, "recall hardcodes no plugins/fwx/ path"),
+        ("reentry path without the plugin root", GOOD_RECALL.replace("${CLAUDE_PLUGIN_ROOT}/", ""), GOOD_NOTICE, "recall reads reentry.md through ${CLAUDE_PLUGIN_ROOT}"),
+        ("NOTICE without the plugin root", GOOD_RECALL, GOOD_NOTICE.replace("${CLAUDE_PLUGIN_ROOT}/", ""), "NOTICE names the ${CLAUDE_PLUGIN_ROOT} reentry path of recall")]:
     got = [c for c, _ in recall_problems(text, notice)]
     check("control: " + label, want in got, "got %s, want %r" % (got, want))
 

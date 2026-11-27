@@ -132,7 +132,7 @@ prescriptions); and the owner's own ui-walk skill of a project, .claude/skills/u
 
 cursor/plugins, https://github.com/cursor/plugins, commit b7b93c36be9b.
   skills/recall/SKILL.md: pstack/skills/recall/SKILL.md word for word, except the passages its header names as adapted: the transcript
-  folders of Cursor become this project's `.fwx/` documents, git and gh; `session-pickup` reads `skills/discuss/references/reentry.md`; the
+  folders of Cursor become this project's `.fwx/` documents, git and gh; `session-pickup` reads `${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md`; the
   pointer to the `poteto-mode` Subagents section reads "name the model on every launch (CLAUDE.md)"; the `automate-me` and `unslop` lines
   and the Cursor-only mechanics (MCP agent mode, transcript UUID paths) are removed.
   Read for skills/discuss/SKILL.md and skills/discuss/references/rounds.md: pstack/skills/poteto-mode/SKILL.md (the first-message rule, the
