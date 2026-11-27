@@ -513,6 +513,15 @@ write(copy, synced.replace("/config/AGENT-SYSTEM.md by ", "/docs/AGENT-SYSTEM.md
 code, out = w.forge("uninstall", "--apply")
 check("a copy whose banner names docs/AGENT-SYSTEM.md is removed -- %s" % sandbox.tail(out, 3), not os.path.lexists(copy), out)
 
+# A copy the user edited is not forge's: uninstall leaves it and names it (Gemini's re-check of PR 281: no check held this).
+# Seen failing on the mutant "ours = True": "FAIL an edited copy of AGENT-SYSTEM.md stays and is named" (106 checks, 1 failed).
+w = World("editedcopy")
+copy = os.path.join(w.app, ".claude", "AGENT-SYSTEM.md")
+write(copy, read(copy) + "MY NOTE\n")
+code, out = w.forge("uninstall", "--apply")
+check("an edited copy of AGENT-SYSTEM.md stays and is named -- %s" % sandbox.tail(out, 3),
+      os.path.isfile(copy) and read(copy).endswith("MY NOTE\n") and bang_lines(out, "AGENT-SYSTEM.md"), out)
+
 # F11 and F17: ~/.cache/forge and ~/.local/state/forge as links are removed as links, their targets kept.
 # Red on 34c191b: 'OSError: Cannot call rmtree on a symbolic link', exit 1, the SessionStart row and the record left.
 w = World("symdirs")
