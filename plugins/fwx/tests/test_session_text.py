@@ -600,6 +600,13 @@ def main():
     asking = [n for n, t in (("SKILL.md rule 6", rule6_of(skill)), ("SKILL.md step 4", step(skill, 4)), ("SKILL.md step 8", s8),
                              ("references/ui-review.md", review), ("references/factory-return.md", scanned["references/factory-return.md"])) if "Recommended:" not in t]
     check("every question to the owner carries a `Recommended:` line", not asking, "no `Recommended:` in %s" % asking)
+    # CodeRabbit PR 279: a worker failure after execution starts is kept in the run state (`st["result"]["why"]`, not committed); the only reason on the
+    # branch is the `--why` of the stage row, and only when the factory gave one. Step 2 must say what to do when it has none. Seen red on the text at ced1761:
+    #   FAIL: factory-return.md step 2 says what to do when the stage row holds no reason -> step 2: 'Read why it came back. ... (the last one says why it stopped)'
+    fr_step2 = next((ln for ln in scanned["references/factory-return.md"].splitlines() if re.match(r"2\. \*\*Read why", ln)), "")
+    names_no_reason = lambda s: "no reason" in s
+    check("factory-return.md step 2 says what to do when the stage row holds no reason", names_no_reason(fr_step2), "step 2: %r" % fr_step2[:110])
+    check("control: a step 2 that trusts the last row is caught", not names_no_reason("2. **Read why it came back.** The last `stage` rows (the last one says why it stopped)"))
     # 01.2 T23 (D2, D7): a phase holds a handful of rows (rule 6), and closing.md's step 3 carries the three tests of an ADR word for word from
     # domain-modeling, with its copied-from header. Seen red at c538909 (the texts before this task):
     #   FAIL: SKILL.md rule 6 says a phase holds a handful of rows -> rule 6 has no 'handful of rows'
