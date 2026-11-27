@@ -69,6 +69,10 @@ BAD = {
     "milestones/v2/phases/01-x/notes.md": "research",
     "research/subprojects/a/factory/UPPER.md": "research/subprojects/a/factory/upper.md",   # only `factory/<KEY>` at a scope root is exempt
     "factory/K 1/plan.md": "factory/K-1/plan.md",                                           # a space is refused in a key too
+    "research": "research/research",                                                        # a bare file named like a folder
+    "durable": "research/durable",
+    "milestones/v2/phases/01-x/demo": "research/demo",
+    "milestones/v2/phases/01-x/research": "research/research",
 }
 
 for p in GOOD:

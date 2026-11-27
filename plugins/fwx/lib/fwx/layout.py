@@ -44,7 +44,7 @@ def _closed(root, folder):
 
 def _work(parts, closed):
     head = parts[0]
-    if head in _DIRS or (len(parts) == 1 and (head in WORK_FILES or (closed and (head == "state.md" or _REPORT.match(head))))):
+    if (head in _DIRS and len(parts) > 1) or (len(parts) == 1 and (head in WORK_FILES or (closed and (head == "state.md" or _REPORT.match(head))))):
         return None
     if len(parts) == 1 and (head == "state.md" or _REPORT.match(head)):
         return ("%s is kept only in a closed or cancelled phase" % head, "the phase, once it is closed or cancelled")
@@ -67,7 +67,7 @@ def _milestone(root, folder, parts):
 
 def _scope(root, folder, parts):
     head, rest = parts[0], parts[1:]
-    if (head in SCOPE_FILES and not rest) or head in OPEN_FOLDERS:
+    if (head in SCOPE_FILES and not rest) or (head in OPEN_FOLDERS and rest):
         return None
     if head == "subprojects" and len(rest) >= 2:
         return _scope(root, folder / "subprojects" / rest[0], rest[1:])
