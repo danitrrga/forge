@@ -50,6 +50,8 @@ docstring line is its help, and there is no list to edit.
 
 The owner opens a piece of work himself with `/fwx:gather-context`, pstack's `recall` skill under the name the owner chose (`skills/gather-context/SKILL.md`, owner-only: `disable-model-invocation: true`): it rebuilds where the work stands from `.fwx/`, git and `gh` and hands back a short brief. It only gathers context: it never starts or binds a session, and resuming a phase is `/fwx:discuss`. Its source and the passages adapted are named in its header and in `NOTICE`.
 
+The owner sets up or refreshes the project's long-lived documents with `/fwx:setup-documents` (`skills/setup-documents/SKILL.md`, owner-only): research agents mine the owner's words, the written record and the history; one round of questions on what conflicts or is open; then `project.md` and `durable/identity.md`, `durable/value.md` and `durable/philosophy.md` are drafted from `templates/`, rewritten by a writer agent and judged by two reviewers from different vendors until both agree, and written into `.fwx/` (`python3 -m fwx.layout` must pass). `brand.md` and `design-contract.md` wait for a design session. It starts no other skill. It is modelled on pstack's `setup-pstack` and Matt Pocock's `setup-matt-pocock-skills` (named in its header); no text is copied, so `NOTICE` has no entry. `gather-context` reads these documents.
+
 ## Agents
 
 Each agent gets, by path in its brief, only what its job needs; nothing is injected into every agent. A critic or a reviewer gets files, never the author's reasoning. The agent files are `agents/<role>.md`; the fixer and the conflict resolver are modes of the executor, chosen by the brief.
