@@ -327,6 +327,14 @@ def discuss_problems(skill, rounds):
     if not claim or not playback or not claim[0] < playback[0]:
         out.append(("a claim check runs before the playback", "claim step %s, playback step %s: it needs `models.researcher.normal`, a claim check, context.md, "
                     "decisions.tsv and who and what the change touches" % (claim, playback)))
+    # 01.2 fix g2: `decisions.tsv` is written only by `fwx decision new` (step 5), so the claim step drafts `context.md` alone.
+    # Seen red at f255632:
+    #   FAIL: the claim check drafts only context.md -> claim step: 'write the draft `context.md` and `decisions.tsv`, then launch'
+    #   FAIL: the playback freezes context.md only on confirmation -> playback.md: no 'explicit confirmation before freezing `context.md`'
+    #   FAIL: playback.md's header names the freezing edit -> no 'freezing' in its copied-from lines
+    drafts = re.search(r"write the draft[^;]*decisions\.tsv[^;]*", steps.get(claim[0], "") if claim else "", re.I)
+    if drafts:
+        out.append(("the claim check drafts only context.md", "claim step: %r" % drafts.group(0)[:60]))
     lines = skill.splitlines()
     paused = ["SKILL.md:%d %r" % (i, w) for i, l in enumerate(lines, 1) for w in PAUSED if w.lower() in l.lower()]
     if paused:
@@ -363,6 +371,10 @@ def playback_problems(text):
         out.append(("the playback calls out every agent-assumption and unexamined row", "no bullet 'Call outs' naming both"))
     if "wait for explicit confirmation" not in text:
         out.append(("the playback waits for explicit confirmation", "no 'wait for explicit confirmation'"))
+    if "explicit confirmation before freezing `context.md`" not in text:
+        out.append(("the playback freezes context.md only on confirmation", "no 'explicit confirmation before freezing `context.md`'"))
+    if "freezing" not in "\n".join(l for l in text.splitlines() if "copied-from:" in l):
+        out.append(("playback.md's header names the freezing edit", "no 'freezing' in its copied-from lines"))
     return out
 
 
@@ -374,12 +386,13 @@ GOOD_DISCUSS = ("---\nname: discuss\ndisable-model-invocation: true\n---\n"
                 "3. **Ask.** First check: what you understood, the smallest change that meets it. One or two obvious files: say so and offer plain Claude.\n"
                 "5. **Record.** A phase holds a handful of rows.\n"
                 "6. **Research.** A fork a throwaway script outside the repo can settle goes to a `researcher`.\n"
-                "7. **Claim check.** Launch `researcher` (`models.researcher.normal`): every claim of context.md and decisions.tsv, and who and what the change touches.\n"
+                "7. **Claim check.** Write the draft context.md only; decisions.tsv is already written by step 5. Launch `researcher` (`models.researcher.normal`): every claim of context.md and decisions.tsv, and who and what the change touches.\n"
                 "8. **Playback.** Per `references/playback.md`.\n")
 GOOD_ROUNDS = ("<!-- referent: cursor/plugins pstack/skills/poteto-mode/SKILL.md @b7b93c36be9b -->\n"
                "- Round one asks his view first: its questions carry no `Recommended:` line.\n"
                "- When his reasoning is weak or reverses an existing rule or ADR, say so plainly.\n")
-GOOD_PLAYBACK = "- **Call outs** lists every `agent-assumption` or `unexamined` row.\nWait for explicit confirmation: wait for explicit confirmation.\n"
+GOOD_PLAYBACK = ("<!-- copied-from: x (line 92, freezing) -->\n- **Call outs** lists every `agent-assumption` or `unexamined` row.\n"
+                 "Wait for explicit confirmation: wait for explicit confirmation before freezing `context.md`.\n")
 check("control: the good discuss toy passes", discuss_problems(GOOD_DISCUSS, GOOD_ROUNDS) == [], "got %s" % discuss_problems(GOOD_DISCUSS, GOOD_ROUNDS))
 check("control: the good playback toy passes", playback_problems(GOOD_PLAYBACK) == [], "got %s" % playback_problems(GOOD_PLAYBACK))
 for label, skill2, rounds2, want in [
@@ -392,6 +405,7 @@ for label, skill2, rounds2, want in [
         ("a first check without the smallest change", GOOD_DISCUSS.replace("the smallest change that meets it", "the subproject"), GOOD_ROUNDS, "the first check names the smallest change"),
         ("no plain Claude offer", GOOD_DISCUSS.replace("plain Claude", "a phase"), GOOD_ROUNDS, "step 3 offers plain Claude when the change is one or two obvious files"),
         ("no handful of rows", GOOD_DISCUSS.replace("A phase holds a handful of rows.", "Record rows."), GOOD_ROUNDS, "step 5 says a phase holds a handful of rows"),
+        ("claim step drafts decisions.tsv too", GOOD_DISCUSS.replace("Write the draft context.md only; decisions.tsv is already written by step 5.", "Write the draft context.md and decisions.tsv; then"), GOOD_ROUNDS, "the claim check drafts only context.md"),
         ("a fork asked of the owner", GOOD_DISCUSS.replace("throwaway script", "question"), GOOD_ROUNDS, "step 6 sends a fork a throwaway script can settle to a researcher"),
         ("SKILL.md header without the commit", GOOD_DISCUSS.replace("@b7b93c36be9b", "@36885ea"), GOOD_ROUNDS, "SKILL.md names its pstack referent at b7b93c36be9b"),
         ("rounds.md without the referent", GOOD_DISCUSS, GOOD_ROUNDS.replace("referent:", "note:"), "rounds.md names its pstack referent at b7b93c36be9b"),
@@ -399,10 +413,13 @@ for label, skill2, rounds2, want in [
         ("no weak-reasoning line", GOOD_DISCUSS, GOOD_ROUNDS.replace("is weak or reverses", "is odd or changes"), "rounds.md says plainly when his reasoning is weak or reverses a rule or ADR")]:
     got = [c for c, _ in discuss_problems(skill2, rounds2)]
     check("control: " + label, want in got, "got %s, want %r" % (got, want))
-for label, text in [("no call-out bullet", GOOD_PLAYBACK.replace("- **Call outs** lists every `agent-assumption` or `unexamined` row.\n", "")),
-                    ("a call-out bullet naming one value", GOOD_PLAYBACK.replace(" or `unexamined`", "")),
-                    ("no explicit confirmation", GOOD_PLAYBACK.replace("wait for explicit confirmation", "go on"))]:
-    check("control: " + label, len(playback_problems(text)) == 1, "got %s" % playback_problems(text))
+for label, text, want in [("no call-out bullet", GOOD_PLAYBACK.replace("- **Call outs** lists every `agent-assumption` or `unexamined` row.\n", ""), "the playback calls out every agent-assumption and unexamined row"),
+                          ("a call-out bullet naming one value", GOOD_PLAYBACK.replace(" or `unexamined`", ""), "the playback calls out every agent-assumption and unexamined row"),
+                          ("no explicit confirmation", GOOD_PLAYBACK.replace("wait for explicit confirmation", "go on"), "the playback waits for explicit confirmation"),
+                          ("confirmation before writing", GOOD_PLAYBACK.replace("before freezing", "before writing"), "the playback freezes context.md only on confirmation"),
+                          ("a header without the freezing edit", GOOD_PLAYBACK.replace(", freezing", ""), "playback.md's header names the freezing edit")]:
+    got = [c for c, _ in playback_problems(text)]
+    check("control: " + label, want in got, "got %s, want %r" % (got, want))
 check("control: the real playback.md without its call-out bullet fails",
       [c for c, _ in playback_problems("\n".join(l for l in files["playback.md"].splitlines() if "Call outs" not in l))] == ["the playback calls out every agent-assumption and unexamined row"])
 
