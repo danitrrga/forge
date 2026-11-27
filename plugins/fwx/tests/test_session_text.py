@@ -303,6 +303,18 @@ def main():
     check("control: texts that read Linear keys from the run's json are caught",
           len(linear_key_problems("take their Linear keys from it", "## Outside\n## Evidence", "because the part report reads them back from the stage rows")) == 5)
 
+    # r1-F1 (fix-1): a Linear key filed at step 5 must survive into a later session (a resume, the close's PR body), so step 5 records each as
+    # `filed: <where> - <KEY>` in its stage row's `--why` and the report texts read the key from those rows. Seen red before the fix:
+    #   FAIL: step 5 records filed keys in the stage row and the report reads them there -> step 5 has no `filed: <where> - <KEY>`; part-report.md does not read `filed:` from the stage rows; template Outside does not name the `filed:` entry
+    def filed_key_problems(rep, tmpl, step5):
+        outside_section = tmpl.split("## Outside")[-1].split("## Evidence")[0]
+        return (["step 5 has no `filed: <where> - <KEY>`"] if "`filed: <where> - <KEY>`" not in step5 else []) + (
+            ["part-report.md does not read `filed:` from the stage rows"] if "filed: <where> - <KEY>" not in rep else []) + (
+            ["template Outside does not name the `filed:` entry"] if "`filed:`" not in outside_section else [])
+    check("step 5 records filed keys in the stage row and the report reads them there", not filed_key_problems(rep_ref, template, step(skill, 5)),
+          "; ".join(filed_key_problems(rep_ref, template, step(skill, 5))))
+    check("control: texts with no `filed:` record are caught", len(filed_key_problems("none filed", "## Outside\n## Evidence", "unfiled go in the `--why`")) == 3)
+
     # 01.3 fix g4: the `consider` findings print once, in the report's Done (templates/phase/report.md); step 8.2 no longer pastes them again from the
     # run's raw `<n>-findings.json`. Seen red at a913be9:
     #   FAIL: step 8.2 does not paste the consider findings a second time from `<n>-findings.json` -> names ['`result.consider`', '`consider` findings']
