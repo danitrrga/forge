@@ -1,4 +1,4 @@
-<!-- copied-from: EveryInc/compound-engineering-plugin skills/ce-brainstorm/references/synthesis-summary.md @3449230705a5 (lines 31, 33, 35, 36, 38, 40, 42, 92, each adapted: "user" reads "owner", "the (scoping) synthesis" reads "the playback", "the doc" reads `context.md`; also line 40 loses its Deep-scope and ce-noslop sentences, line 92 loses " The loop is:") -->
+<!-- copied-from: EveryInc/compound-engineering-plugin skills/ce-brainstorm/references/synthesis-summary.md @3449230705a5 (lines 31, 33, 35, 36, 38, 40, 42, 92, each adapted: "user" reads "owner", "the (scoping) synthesis" reads "the playback", "the doc" reads `context.md`; also line 40 loses its Deep-scope and ce-noslop sentences, line 92 loses " The loop is:" and its "before writing the doc" reads "before freezing `context.md`") -->
 <!-- copied-from: EveryInc/compound-engineering-plugin skills/ce-brainstorm/references/dialogue.md @3449230705a5 (line 87, adapted: "user" reads "owner", "Phase 1.3" and "Phase 2.5" read "the playback", "one-question-at-a-time dialogue" reads "the rounds"; three passages dropped, listed in NOTICE) -->
 <!-- referent: none, the last three bullets are written here -->
 # Playback
@@ -15,7 +15,7 @@ Leave out anything the owner cannot judge without reading code (file paths, name
 
 If a question genuinely cannot be defaulted, resolve it before presenting the playback, then integrate the answer. Never present the playback with open questions beside it, since the owner then has no clear way to respond.
 
-A revision is not a confirmation. After any owner revision (even a trivially-understood swap like "move deferred item X back into scope"), integrate the change, re-present the revised playback with the change reflected, and wait for explicit confirmation before writing `context.md`.
+A revision is not a confirmation. After any owner revision (even a trivially-understood swap like "move deferred item X back into scope"), integrate the change, re-present the revised playback with the change reflected, and wait for explicit confirmation before freezing `context.md`.
 
 **Before the playback: integration check.** Mentally combine what the owner has said so far and raise any non-obvious consequences the dialogue hasn't probed. If owner-stated X plus owner-stated Y plus your-default-Z produces a downstream effect the owner is unlikely to have tracked through the rounds, probe it now while you're still in dialogue. One probe per genuine combination effect, asked open-ended. The playback's call-outs are a safety net for residuals — NOT a punt list for consequences you could have asked about now.
 

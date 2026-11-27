@@ -210,7 +210,7 @@ def scenario(work):
                        #   FAIL: fwx context new .: exit 2 and 'unknown command: context': got (0, False, 'STUB context_base ["build", "."]\n')
                        (("context", "new", "."), "unknown command: context"), (("context", "lint", "."), "unknown command: context"),
                        (("context-base", "build"), "unknown command: context-base"),
-                       # `fwx decision list` is gone (the rows are read from decisions.tsv, or through `state.decisions_in_force`): no row, no
+                       # `fwx decision list` is gone (the rows are read from decisions.tsv): no row, no
                        # default verb for `decision`, and the old `state decisions` name is not redirected to a command that is gone. Red
                        # at c538909 (the row and the default were there; the stub handler answered):
                        #   FAIL: fwx decision list: exit 2 and 'unknown verb: list': got (0, False, 'STUB state ["decisions"]\n')
