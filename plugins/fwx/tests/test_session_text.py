@@ -311,6 +311,14 @@ def main():
     check("step 8.2 does not paste the consider findings a second time from `<n>-findings.json`", not consider_twice(s8), "names %s" % consider_twice(s8))
     check("control: a step 8.2 that pastes `result.consider` after the report is caught", bool(consider_twice("then: the `consider` findings (`result.consider` of the run")))
 
+    # 01.3 fix g8: open `agent-assumption` rows of decisions.tsv are a source of the report's Assumptions, for a resume or the close. Seen red at a913be9:
+    #   FAIL: part-report.md takes Assumptions also from the open `agent-assumption` rows of decisions.tsv -> missing `agent-assumption` or decisions.tsv
+    def assumption_sources(text):
+        return [w for w in ("`agent-assumption`", "decisions.tsv") if w not in text]
+    check("part-report.md takes Assumptions also from the open `agent-assumption` rows of decisions.tsv", not assumption_sources(rep_ref),
+          "missing %s" % ", ".join(assumption_sources(rep_ref)))
+    check("control: a part-report.md that takes assumptions only from the orchestrator's own choices is caught", len(assumption_sources("from the choices you made yourself (rule 6)")) == 2)
+
     def closing_body(text):
         return [w for w in ("templates/phase/report.md", '--why "PR <url>"', '--why "commit <sha>"') if w not in text] + (
             [] if in_order(text, "templates/phase/report.md", "gh pr edit", "fwx stage <phase folder> closed") else ["the order template, gh pr edit, stage row"])
