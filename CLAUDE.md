@@ -49,7 +49,8 @@ only rollback: a `.bak` file is written once, ever.
    and why.
 3. **A test never seen to fail is not evidence.** Write the test first, run it against the current code, and
    keep the failure message in the test comment and the commit message. Every new check carries a negative
-   control that proves it can fail.
+   control that proves it can fail. Mutants only for security or data-loss invariants; every other behaviour
+   gets one plain test seen failing first.
 4. **A check says how much it looked at, and looking at zero is a failure** wherever zero is impossible. A check
    that could not run because a tool or a secret is missing prints `NOT RUN, NOT ARMED` and is neither a PASS
    nor a FAIL. A check that finds nothing to look at because the user switched that feature off is a SKIP with
