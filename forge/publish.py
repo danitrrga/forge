@@ -430,18 +430,21 @@ def route(paths, two):
 
 def layout_lines(paths):
     """([the layout check's lines], the NOT ARMED line or None) for the routed `paths` under .fwx/ that still exist.
-    A deleted path, or the old side of a rename, is never checked: removing a bad name is how it is fixed."""
+    A deleted path, or the old side of a rename, is never checked: removing a bad name is how it is fixed.
+    The plugin's lib absent is NOT ARMED; present but failing is a broken check and raises CheckError, never a pass."""
     fwx_dir = os.path.join(lib.ROOT, ".fwx")
     held = [p for p in paths if p.startswith(".fwx/") and os.path.lexists(os.path.join(lib.ROOT, p))]
     if not held:
         return [], None
     plugin_lib = os.path.join(lib.ROOT, "plugins", "fwx", "lib")
+    if not os.path.isfile(os.path.join(plugin_lib, "fwx", "layout.py")):
+        return [], "%sfwx layout check (the plugin's lib is not at %s)" % (lib.NOT_ARMED, plugin_lib)
     sys.path.insert(0, plugin_lib)
     try:
         from fwx import layout
         return layout.check(fwx_dir, [p[len(".fwx/"):] for p in held])[0], None
-    except Exception as e:  # the plugin's lib missing or broken must not stop a commit
-        return [], "%sfwx layout check (%s)" % (lib.NOT_ARMED, "%s: %s" % (type(e).__name__, e))
+    except Exception as e:
+        raise CheckError("the fwx layout check failed (%s: %s); nothing was committed" % (type(e).__name__, e))
     finally:
         sys.path.remove(plugin_lib)
 
@@ -488,7 +491,11 @@ def cmd_commit(a):
     if not eng and not priv:
         print("nothing to commit")
         return 0
-    bad, not_armed = layout_lines(eng | priv)
+    try:
+        bad, not_armed = layout_lines(eng | priv)
+    except CheckError as e:
+        print("forge commit: %s" % e, file=sys.stderr)
+        return 2
     if bad:
         for line in bad:
             print(".fwx/" + line, file=sys.stderr)

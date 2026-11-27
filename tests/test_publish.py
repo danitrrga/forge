@@ -1117,6 +1117,16 @@ def layout_cases():
     want("layout without the plugin's lib = exit", code, 0)
     has("layout without the plugin's lib", out, "NOT RUN, NOT ARMED: fwx layout check (")
     want("layout without the plugin's lib: committed", files_of(root, data=True), [".fwx/Notes.md"])
+    # A lib that is there but raises is a broken check, not a missing one: the commit is refused.
+    # Red against the fail-open code: "layout with a broken lib = exit: got 0, want 2" (the commit went through under NOT ARMED).
+    root = toy("layout-broken", overlay=True, fwx_lib=True)
+    write(root, "plugins/fwx/lib/fwx/layout.py", "raise RuntimeError('boom')\n")
+    write(root, ".fwx/Notes.md", "x\n")
+    d0 = head(root, data=True)
+    code, out = forge(root, "commit", "-m", "broken lib", ".fwx/Notes.md")
+    want("layout with a broken lib = exit", code, 2)
+    has("layout with a broken lib", out, "fwx layout check failed (RuntimeError: boom)")
+    want("layout with a broken lib: nothing committed", head(root, data=True), d0)
     # Nothing under .fwx/ changed: no line about the check at all.
     root = toy("layout-none", overlay=True)
     write(root, "notes.txt", "n\n")

@@ -105,10 +105,11 @@ RE_MS_ANY = re.compile(r"milestones/v(\d+)\.\d+-.*\Z")
 RE_AUDIT = re.compile(r"v(\d+)\.\d+-MILESTONE-AUDIT\.md\Z")
 # match kinds: name (a file at the scope root), tree (anything below the folder), glob (fnmatch on the path),
 #             regex (re.match on the path, group 1 is the milestone's major)
-# dest kinds: scope (<dest>/<same name>), actual (<dest>/milestones/<current>/<name>), major (<dest>/milestones/v<group 1>/<rest>),
+# dest kinds: lower (<dest>/<name in lower case>: the project document is `project.md`), actual (<dest>/milestones/<current>/<name>),
+#             major (<dest>/milestones/v<group 1>/<rest>),
 #             backlog (<dest>/backlog/<same path>: moved as it is, never converted), none (the file goes nowhere)
 ROWS = (
-    ("project", "keep", "name", ("PROJECT.md",), "scope"),
+    ("project", "keep", "name", ("PROJECT.md",), "lower"),
     ("milestone-docs", "keep", "name", MILESTONE_DOCS, "actual"),
     ("milestone-file", "keep", "regex", (RE_MS_ANY,), "major"),
     ("milestone-audit", "keep", "regex", (RE_AUDIT,), "major"),
@@ -545,8 +546,8 @@ def classify_tracked(sc, inner):
             continue
         rule, action, how, patterns, dest = row
         base = inner.rsplit("/", 1)[-1]
-        if dest == "scope":
-            return action, inner, rule
+        if dest == "lower":
+            return action, inner.lower(), rule
         if dest == "backlog":
             return action, "backlog/" + inner, rule
         if dest == "actual":
