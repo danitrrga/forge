@@ -262,7 +262,11 @@ def main():
             out.append("%d lines" % len(text.splitlines()))
         return out
     check("templates/phase/report.md has the six sections of the orchestrator's report in at most 40 lines", not template_problems(template), "problems: %s" % template_problems(template))
-    check("control: a template with a missing section or over 40 lines is caught", template_problems("## Goal\n") != [] and template_problems("\n".join("## Goal" for _ in range(41))) != [])
+    # CodeRabbit PR 279: the 41-line fixture also lacked five headings, so it passed with the length check removed. Each control now has one fault.
+    # Seen red with the length check removed from template_problems: "FAIL: control: a template with all six sections and 41 lines is caught on length alone"
+    check("control: a template with a missing section is caught on that alone", template_problems("## Goal\n") == ["heading %r" % h for h in TEMPLATE_HEADINGS[1:]])
+    check("control: a template with all six sections and 41 lines is caught on length alone",
+          template_problems("\n".join(TEMPLATE_HEADINGS) + "\n" * 36) == ["41 lines"], "got %s" % template_problems("\n".join(TEMPLATE_HEADINGS) + "\n" * 36))
 
     def fills_template(text):
         return [w for w in ("templates/phase/report.md", "fwx wave --run <R> --json", "`outside`", "`consider`", "last `evidence` row", "audit.tsv", "paste") if w not in text]
