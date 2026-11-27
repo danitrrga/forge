@@ -365,6 +365,11 @@ def discuss_problems(skill, rounds):
     s3 = steps.get(3, "")
     if not re.search(r"one or two obvious files[^.]*plain Claude|plain Claude[^.]*one or two obvious files", s3, re.I):
         out.append(("step 3 offers plain Claude when the change is one or two obvious files", "step 3: %r" % s3[:60]))
+    # CodeRabbit PR 279: the researchers of step 3 run in the background, and a late one writes under a phase folder `fwx phase remove` has
+    # deleted (recreating a stage-less folder that `open_phases` counts as open), so the removal waits for their completion notices.
+    # Seen red on the skill at 7049129: "FAIL: step 3 waits for the researchers before removing the phase -> step 3: ..."
+    if not re.search(r"(?:completion notices?|finished)[^.;]*(?:then|before)[^.;]*`fwx phase remove", s3, re.I):
+        out.append(("step 3 waits for the researchers before removing the phase", "step 3: %r" % s3[-120:]))
     if not (steps.get(5) and "handful of rows" in steps[5]):
         out.append(("step 5 says a phase holds a handful of rows", "step 5 has no 'handful of rows'"))
     s6 = steps.get(6, "")
@@ -401,7 +406,7 @@ for name, detail in discuss_problems(files["SKILL.md"], files["rounds.md"]) + pl
 
 GOOD_DISCUSS = ("---\nname: discuss\ndisable-model-invocation: true\n---\n"
                 "<!-- referent: cursor/plugins pstack/skills/poteto-mode/SKILL.md @b7b93c36be9b (the rules) -->\n"
-                "3. **Ask.** First check: what you understood, the smallest change that meets it. One or two obvious files: say so and offer plain Claude.\n"
+                "3. **Ask.** First check: what you understood, the smallest change that meets it. One or two obvious files: say so and offer plain Claude; on his yes, wait for the researchers' completion notices, then `fwx phase remove <phase>`.\n"
                 "5. **Record.** A phase holds a handful of rows.\n"
                 "6. **Research.** A fork a throwaway script run inline, writing no file, can settle goes to a `researcher`.\n"
                 "7. **Claim check.** Write the draft context.md only; decisions.tsv is already written by step 5. Launch `researcher` (`models.researcher.normal`): every claim of context.md and decisions.tsv, and who and what the change touches.\n"
@@ -422,6 +427,7 @@ for label, skill2, rounds2, want in [
         ("a Linear waiting list", GOOD_DISCUSS.replace("First check:", "First check: Linear (`waiting.groups` by age),"), GOOD_ROUNDS, "discuss shows no Linear waiting list"),
         ("a first check without the smallest change", GOOD_DISCUSS.replace("the smallest change that meets it", "the subproject"), GOOD_ROUNDS, "the first check names the smallest change"),
         ("no plain Claude offer", GOOD_DISCUSS.replace("plain Claude", "a phase"), GOOD_ROUNDS, "step 3 offers plain Claude when the change is one or two obvious files"),
+        ("a removal that does not wait", GOOD_DISCUSS.replace("wait for the researchers' completion notices, then ", ""), GOOD_ROUNDS, "step 3 waits for the researchers before removing the phase"),
         ("no handful of rows", GOOD_DISCUSS.replace("A phase holds a handful of rows.", "Record rows."), GOOD_ROUNDS, "step 5 says a phase holds a handful of rows"),
         ("claim step drafts decisions.tsv too", GOOD_DISCUSS.replace("Write the draft context.md only; decisions.tsv is already written by step 5.", "Write the draft context.md and decisions.tsv; then"), GOOD_ROUNDS, "the claim check drafts only context.md"),
         ("a fork asked of the owner", GOOD_DISCUSS.replace("throwaway script", "question"), GOOD_ROUNDS, "step 6 sends a fork a throwaway script can settle to a researcher"),
