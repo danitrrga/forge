@@ -380,7 +380,7 @@ def main_world():
     outside = [p for p in logged if not os.path.realpath(p).startswith(w.top + os.sep)]
     check("every path forge logged lies under the world (%d logged)" % len(logged), len(logged) > 0 and not outside,
           "logged %d, outside: %s" % (len(logged), outside[:3]))
-    named = ("config/forge.json", "config/projects/forge.claude.json", "config/mcp-registry.json", "credentials/secrets.json", "docs/AGENT-SYSTEM.md")
+    named = ("config/forge.json", "config/projects/forge.claude.json", "config/mcp-registry.json", "credentials/secrets.json", "config/AGENT-SYSTEM.md")
     check("the init output names what it wrote", all(s in out for s in named), "missing %s in: %s" % ([s for s in named if s not in out], tail(out, 30)))
 
     fj = read_json(w.path("config", "forge.json")) or {}
@@ -393,8 +393,8 @@ def main_world():
     want("credentials/secrets.json is `{}`, mode 600", (read_json(sec), oct(os.stat(sec).st_mode & 0o777) if os.path.exists(sec) else None), ({}, "0o600"))
     link = w.path("config", "secrets.json")
     want("config/secrets.json links to ../credentials/secrets.json", os.readlink(link) if os.path.islink(link) else None, "../credentials/secrets.json")
-    doc = w.path("docs", "AGENT-SYSTEM.md")
-    check("docs/AGENT-SYSTEM.md is the example", os.path.exists(doc) and open(doc).read() == open(w.path("examples", "AGENT-SYSTEM.md")).read())
+    doc = w.path("config", "AGENT-SYSTEM.md")
+    check("config/AGENT-SYSTEM.md is the example", os.path.exists(doc) and open(doc).read() == open(w.path("examples", "AGENT-SYSTEM.md")).read())
     # Red against init_write without the gateway put (1.1 U4): "config/gateway.json is the example".
     gw = w.path("config", "gateway.json")
     check("config/gateway.json is the example", os.path.exists(gw) and open(gw).read() == open(w.path("examples", "gateway.json")).read())
@@ -627,7 +627,10 @@ def kept_world():
     w = World("kept")
     os.makedirs(w.path("config"), exist_ok=True)
     os.makedirs(w.path("credentials"))
-    mine = {"config/mcp-registry.json": '{"servers": {}, "_doc": "mine"}\n', "credentials/secrets.json": '{"TOKEN": "mine"}\n'}
+    os.makedirs(w.path("docs"), exist_ok=True)
+    # docs/AGENT-SYSTEM.md is where the canonical doc lived before it moved to config/: init writes no example beside it.
+    mine = {"config/mcp-registry.json": '{"servers": {}, "_doc": "mine"}\n', "credentials/secrets.json": '{"TOKEN": "mine"}\n',
+            "docs/AGENT-SYSTEM.md": "# my system doc\n"}
     for rel, text in mine.items():
         with open(w.path(rel), "w") as fh:
             fh.write(text)
@@ -635,6 +638,7 @@ def kept_world():
     check("init over existing data exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
     for rel, text in mine.items():
         check("init keeps %s" % rel, open(w.path(rel)).read() == text and "kept   %s" % rel in out, "now %r; %s" % (open(w.path(rel)).read(), tail(out, 20)))
+    want("init writes no config/AGENT-SYSTEM.md over a docs/AGENT-SYSTEM.md", os.path.exists(w.path("config", "AGENT-SYSTEM.md")), False)
 
 
 def other_checkout_world():

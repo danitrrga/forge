@@ -48,13 +48,13 @@ def main():
     portal, app = os.path.join(dev, "Projects", "frozen-app"), os.path.join(dev, "Projects", "app")
     prof_app = os.path.join(dev, "Projects", "prof-app")
     ui_app = os.path.join(dev, "Projects", "ui-app")
-    # The doc is the fixture's, not docs/AGENT-SYSTEM.md of this checkout: a copy_engine copy has none. Red there
-    # before (M1): "FileNotFoundError" copying .../docs/AGENT-SYSTEM.md from sandbox.mini_root.
+    # The doc is the fixture's, not config/AGENT-SYSTEM.md of this checkout: a copy_engine copy has none. Red there
+    # before (M1): "FileNotFoundError" copying .../docs/AGENT-SYSTEM.md (its path before it moved to config/) from sandbox.mini_root.
     sandbox.mini_root(root, SCRIPT, os.path.join("forge", "mcp.py"), os.path.join("forge", "owned.py"),
                      MODULE, os.path.join("forge", "profiles.py"), os.path.join("forge", "suggest.py"))  # the script claims what it creates
-    os.makedirs(os.path.join(root, "docs"))
+    os.makedirs(os.path.join(root, "config"), exist_ok=True)
     shutil.copy(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "AGENT-SYSTEM.md"),
-                os.path.join(root, "docs", "AGENT-SYSTEM.md"))
+                os.path.join(root, "config", "AGENT-SYSTEM.md"))
     os.makedirs(os.path.join(root, "bin"))
     open(os.path.join(root, "bin", "forge"), "w").close()  # lib.installed_root() wants it a file
     projects = os.path.join(root, "config", "projects")
@@ -98,6 +98,13 @@ def main():
     r = subprocess.run([sys.executable, "-c", probe], cwd=tmp, env=env, capture_output=True, text=True, timeout=60)
     check("forge.system_doc is what the script uses, and marker_error names the bad pairs",
           r.stdout == repr([True] * 9), r.stdout + r.stderr)
+    # The canonical doc is the owner's own setup, so it lives in config/, not in docs/ (engine documents only).
+    # Seen failing on 4c4b33c: "FAIL the canonical doc is config/AGENT-SYSTEM.md and the banner names it: got ('docs/AGENT-SYSTEM.md', False)".
+    probe = ("import sys, os; sys.path.insert(0, %r); from forge import system_doc as m; "
+             "sys.stdout.write(repr((os.path.relpath(m.CANON, %r), '/config/AGENT-SYSTEM.md by ' in m.GEN_BANNER)))" % (root, root))
+    r = subprocess.run([sys.executable, "-c", probe], cwd=tmp, env=env, capture_output=True, text=True, timeout=60)
+    check("the canonical doc is config/AGENT-SYSTEM.md and the banner names it",
+          r.stdout == repr(("config/AGENT-SYSTEM.md", True)), "got " + r.stdout + r.stderr)
 
     before = sandbox.manifest(portal)
     rc, out = run("--apply")
@@ -142,9 +149,35 @@ def main():
     rc, out = run("--apply")
     check("a second --apply changes nothing", rc == 0 and "0 change(s) applied." in out, out)
 
+    # A checkout installed before the move still has docs/AGENT-SYSTEM.md and no config/ copy: master's code runs at its next
+    # SessionStart before the owner moves the file, so the doc in docs/ is read until config/ has one, and the banner names it.
+    # Seen failing on 97d1b97: "FAIL with only docs/AGENT-SYSTEM.md, the canonical doc is that one and the banner names it: got
+    # "got ('config/AGENT-SYSTEM.md', False)"" and "FAIL with only docs/AGENT-SYSTEM.md, --apply exits 0: got '! canonical doc
+    # missing: .../forge/config/AGENT-SYSTEM.md'". With both files, config/ wins (Gemini's review of PR 281: a mutant where docs/
+    # shadowed config/ passed every suite). Seen failing on that mutant: "FAIL with both docs/ and config/AGENT-SYSTEM.md, the
+    # canonical doc is config/'s: got "got ('docs/AGENT-SYSTEM.md', False)"".
+    os.makedirs(os.path.join(root, "docs"), exist_ok=True)
+    with open(os.path.join(root, "docs", "AGENT-SYSTEM.md"), "w", encoding="utf-8") as fh:
+        fh.write("# a stale copy left in docs/\n")
+    r = subprocess.run([sys.executable, "-c", probe],
+                       cwd=tmp, env=env, capture_output=True, text=True, timeout=60)
+    check("with both docs/ and config/AGENT-SYSTEM.md, the canonical doc is config/'s",
+          r.stdout == repr(("config/AGENT-SYSTEM.md", True)), "got " + r.stdout + r.stderr)
+    os.replace(os.path.join(root, "config", "AGENT-SYSTEM.md"), os.path.join(root, "docs", "AGENT-SYSTEM.md"))
+    probe = ("import sys, os; sys.path.insert(0, %r); from forge import system_doc as m; "
+             "sys.stdout.write(repr((os.path.relpath(m.CANON, %r), '/docs/AGENT-SYSTEM.md by ' in m.GEN_BANNER)))" % (root, root))
+    r = subprocess.run([sys.executable, "-c", probe], cwd=tmp, env=env, capture_output=True, text=True, timeout=60)
+    check("with only docs/AGENT-SYSTEM.md, the canonical doc is that one and the banner names it",
+          r.stdout == repr(("docs/AGENT-SYSTEM.md", True)), "got " + r.stdout + r.stderr)
+    rc, out = run("--apply")
+    check("with only docs/AGENT-SYSTEM.md, --apply exits 0", rc == 0 and "canonical doc missing" not in out, out)
+    got = read(os.path.join(app, ".claude", "AGENT-SYSTEM.md")) or ""
+    check("with only docs/AGENT-SYSTEM.md, a project's copy is its banner and text",
+          "/docs/AGENT-SYSTEM.md by " in got and got.endswith(read(os.path.join(root, "docs", "AGENT-SYSTEM.md"))), got[:300])
+
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 13 cases" % len(failures))
+    print("%d failure(s) over 17 cases" % len(failures))
     sandbox.cleanup(failures)
     sys.exit(1 if failures else 0)
 

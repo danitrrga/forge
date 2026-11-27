@@ -343,14 +343,14 @@ def copy_engine(dst):
 
 def seed(dst):
     """Gives a copy a world to run in, from fixtures and never from this machine's data: examples/
-    into dst/examples/ and tests/fixtures/config/ into dst/config/, except that AGENT-SYSTEM.md goes
-    to dst/docs/, where the engine looks for it. Files already there are overwritten."""
+    into dst/examples/ and tests/fixtures/config/ into dst/config/ (AGENT-SYSTEM.md among them, where the
+    engine looks for it). Files already there are overwritten."""
     for src, out in (("examples", "examples"), (os.path.join("tests", "fixtures", "config"), "config")):
         base = os.path.join(FORGE, src)
         for d, _, files in os.walk(base):
             for n in files:
                 rel = os.path.relpath(os.path.join(d, n), base)
-                target = os.path.join(dst, "docs" if rel == "AGENT-SYSTEM.md" and out == "config" else out, rel)
+                target = os.path.join(dst, out, rel)
                 os.makedirs(os.path.dirname(target), exist_ok=True)
                 shutil.copy2(os.path.join(d, n), target)
 

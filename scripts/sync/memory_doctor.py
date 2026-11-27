@@ -362,7 +362,7 @@ def backends_of(prof: dict) -> list[str]:
 
 
 def check_one_backend(projects: list, unreadable: list, armed: bool) -> None:
-    """Each project has exactly one memory backend (docs/AGENT-SYSTEM.md: "one per project, never both"). Only a project that
+    """Each project has exactly one memory backend (config/AGENT-SYSTEM.md: "one per project, never both"). Only a project that
     breaks it prints a line; the row that always prints says how many were looked at. A project file that could not be read is
     a FAIL (its backend was not looked at), and so is looking at none of them.
 

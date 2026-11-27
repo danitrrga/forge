@@ -11,7 +11,7 @@ WHY
   WHY is in ensure_agents_md().
 
 WHAT IT DOES (idempotent, dry-run by default)
-  Canonical doc: forge/docs/AGENT-SYSTEM.md
+  Canonical doc: forge/config/AGENT-SYSTEM.md
   For each managed project (derived from config/projects/*.claude.json project_path):
     1. copy the doc -> <project>/.claude/AGENT-SYSTEM.md  (with a GENERATED banner)
     2. ensure <project>/.gitignore ignores .claude/AGENT-SYSTEM.md

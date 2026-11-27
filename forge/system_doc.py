@@ -7,13 +7,23 @@ import os
 from forge import lib
 
 ROOT_FS = lib.ROOT.replace("\\", "/")  # forward-slash form for doc text
-CANON = os.path.join(lib.ROOT, "docs", "AGENT-SYSTEM.md")
+# The canonical doc is the owner's own setup, so it lives in config/. A checkout installed before it moved there still has
+# it in docs/ until the owner moves it, and the engine's code runs at its SessionStart in between: docs/ is read until
+# config/ has the file, so the sync never stops on a missing doc and init never writes an example over the owner's.
+LEGACY = os.path.join(lib.ROOT, "docs", "AGENT-SYSTEM.md")
+_REL = "docs" if os.path.exists(LEGACY) and not os.path.exists(os.path.join(lib.ROOT, "config", "AGENT-SYSTEM.md")) else "config"
+CANON = os.path.join(lib.ROOT, _REL, "AGENT-SYSTEM.md")
 
-GEN_BANNER = (
-    "<!-- GENERATED — DO NOT EDIT. Synced from "
-    + ROOT_FS + "/docs/AGENT-SYSTEM.md by "
-    "scripts/sync/sync_system_doc.py. Edit the canonical copy in forge. -->\n\n"
-)
+
+def _banner(rel):
+    return ("<!-- GENERATED — DO NOT EDIT. Synced from "
+            + ROOT_FS + "/" + rel + "/AGENT-SYSTEM.md by "
+            "scripts/sync/sync_system_doc.py. Edit the canonical copy in forge. -->\n\n")
+
+
+GEN_BANNER = _banner(_REL)
+# Both banners a copy forge wrote can carry: a frozen project is never re-synced, so its copy can still name the other folder.
+BANNERS = (_banner("config"), _banner("docs"))
 
 BEGIN = "<!-- BEGIN FORGE-SYSTEM-POINTER (managed by sync_system_doc.py) -->"
 END = "<!-- END FORGE-SYSTEM-POINTER -->"
