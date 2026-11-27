@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lib/fwx/state.py, the core: where `.fwx/` is, its subproject, milestone, phase and subphase folders, the session
+r"""lib/fwx/state.py, the core: where `.fwx/` is, its subproject, milestone, phase and subphase folders, the session
 file, and the TSV writers (decisions and the single writer of audit.tsv).
 
 Seen red before state.py existed (the file was not there):
@@ -85,6 +85,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
@@ -106,6 +107,24 @@ s = helpers.Suite()
 r = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.modules['fcntl'] = None; sys.path.insert(0, %r); import fwx.state" % os.path.join(helpers.ROOT, "lib")],
                    capture_output=True, text=True)
 s.eq("fwx.state imports with fcntl blocked (as on Windows): exit code (stderr %r)" % r.stderr[-200:], r.returncode, 0)
+
+# No source file of the plugin carries an invalid escape sequence (a SyntaxWarning today, a SyntaxError in a future Python). Seen red on
+# the docstring of this file with an unescaped backslash-d in it:
+#   FAIL: no .py file of the plugin compiles with a SyntaxWarning: ['tests/test_state.py: "\\d" is an invalid escape sequence. Did you mean "\\\\d"? A raw string is also an option.']
+warned = []
+for sub in ("lib", "tests", "bin"):
+    for dirpath, _dirs, files in os.walk(os.path.join(helpers.ROOT, sub)):
+        for name in files:
+            if name.endswith(".py"):
+                p = os.path.join(dirpath, name)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", SyntaxWarning)
+                    try:
+                        with open(p, encoding="utf-8") as fh:
+                            compile(fh.read(), p, "exec")
+                    except SyntaxError as e:
+                        warned.append("%s: %s" % (os.path.relpath(p, helpers.ROOT), e.msg))
+s.ok("no .py file of the plugin compiles with a SyntaxWarning: %s" % warned, not warned)
 
 
 def refuses(label, fn, needle=None):
