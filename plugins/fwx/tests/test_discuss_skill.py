@@ -245,6 +245,16 @@ def recall_problems(text, notice):
         out.append(("recall reads reentry.md through ${CLAUDE_PLUGIN_ROOT}", "no `${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md`"))
     if not any("${CLAUDE_PLUGIN_ROOT}" in b and "skills/recall" in b for b in re.split(r"\n\s*\n", notice)):
         out.append(("NOTICE names the ${CLAUDE_PLUGIN_ROOT} reentry path of recall", "its recall entry has no `${CLAUDE_PLUGIN_ROOT}`"))
+    # 01.2 fix g6: fwx models come from `fwx model <role> <size>`; no project's CLAUDE.md has the rule the upstream pointer cited. Seen red at ecfa19a:
+    #   FAIL: recall cites no CLAUDE.md rule for the model -> its text says 'name the model on every launch (CLAUDE.md)'
+    #   FAIL: recall names the model through `fwx model` -> no `fwx model <role> <size>` in its text
+    #   FAIL: recall's header lists the model adaptation -> its copied-from header has no `fwx model`
+    if "(CLAUDE.md)" in text:
+        out.append(("recall cites no CLAUDE.md rule for the model", "its text says 'name the model on every launch (CLAUDE.md)'"))
+    if "`fwx model <role> <size>`" not in text:
+        out.append(("recall names the model through `fwx model`", "no `fwx model <role> <size>` in its text"))
+    if "fwx model" not in "\n".join(l for l in head.splitlines() if "copied-from:" in l):
+        out.append(("recall's header lists the model adaptation", "its copied-from header has no `fwx model`"))
     return out
 
 
@@ -254,9 +264,9 @@ if os.path.exists(recall_path):
     for name, detail in recall_problems(read("skills", "recall", "SKILL.md"), read("NOTICE")):
         check(name, False, detail)
 
-GOOD_RECALL = ("---\nname: recall\ndisable-model-invocation: true\n---\n<!-- copied-from: cursor/plugins pstack/skills/recall/SKILL.md @b7b93c36be9b -->\n"
+GOOD_RECALL = ("---\nname: recall\ndisable-model-invocation: true\n---\n<!-- copied-from: cursor/plugins pstack/skills/recall/SKILL.md @b7b93c36be9b (fwx model) -->\n"
                "project.md adr.tsv milestone fwx phase list --json phase he names `git` `gh`\n"
-               "${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md\n")
+               "${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md `fwx model <role> <size>`\n")
 GOOD_NOTICE = "cursor/plugins, commit b7b93c36be9b\n  skills/recall/SKILL.md reads `${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md`\n"
 check("control: the good recall toy passes", recall_problems(GOOD_RECALL, GOOD_NOTICE) == [])
 for label, text, notice, want in [
@@ -267,7 +277,10 @@ for label, text, notice, want in [
         ("fwx session named", GOOD_RECALL + "run `fwx session --json`\n", GOOD_NOTICE, "recall never runs fwx session"),
         ("a hardcoded plugins/fwx path", GOOD_RECALL + "plugins/fwx/skills/discuss/references/reentry.md\n", GOOD_NOTICE, "recall hardcodes no plugins/fwx/ path"),
         ("reentry path without the plugin root", GOOD_RECALL.replace("${CLAUDE_PLUGIN_ROOT}/", ""), GOOD_NOTICE, "recall reads reentry.md through ${CLAUDE_PLUGIN_ROOT}"),
-        ("NOTICE without the plugin root", GOOD_RECALL, GOOD_NOTICE.replace("${CLAUDE_PLUGIN_ROOT}/", ""), "NOTICE names the ${CLAUDE_PLUGIN_ROOT} reentry path of recall")]:
+        ("NOTICE without the plugin root", GOOD_RECALL, GOOD_NOTICE.replace("${CLAUDE_PLUGIN_ROOT}/", ""), "NOTICE names the ${CLAUDE_PLUGIN_ROOT} reentry path of recall"),
+        ("a CLAUDE.md model rule", GOOD_RECALL + "name the model on every launch (CLAUDE.md)\n", GOOD_NOTICE, "recall cites no CLAUDE.md rule for the model"),
+        ("no fwx model pointer", GOOD_RECALL.replace("`fwx model <role> <size>`", ""), GOOD_NOTICE, "recall names the model through `fwx model`"),
+        ("header without the model adaptation", GOOD_RECALL.replace(" (fwx model)", ""), GOOD_NOTICE, "recall's header lists the model adaptation")]:
     got = [c for c, _ in recall_problems(text, notice)]
     check("control: " + label, want in got, "got %s, want %r" % (got, want))
 
