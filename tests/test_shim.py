@@ -5,7 +5,7 @@ function calls, only when its first argument starts with `@`: exit 0 when NAME i
 the directory's project, 1 in every other case, and never a byte of output.
 
 Why the function takes `@x` only when the probe says so: `claude @notes.md` is a prompt today (the binary reads `@name` as a
-file mention, framework-discuss/research/profile-daily-measures.md part 2), and a plain `claude` must not pay the probe (about
+file mention, in the data history: framework-discuss/research/profile-daily-measures.md part 2), and a plain `claude` must not pay the probe (about
 33 ms, 80 % of it the import of forge/cli.py), so it never calls forge.
 
 The world is a toy (test_profiles.World: an engine copy, a toy HOME, the projects `multi` with profiles `toy-b` and `list` and

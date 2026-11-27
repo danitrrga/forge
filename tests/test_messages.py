@@ -19,7 +19,7 @@ B. The fork. In a session that no launcher started (a CLAUDE_CODE_SESSION_ID, no
    (nothing is signalled), no request and no record is written. A profile that does not resolve, no session id, an id that is not
    one, a terminal that is not on PATH and a `profiles.terminal` that is no list of words refuse with their next step and open nothing.
 C. `forge start @list --resume ID --fork-session` is a session of ours: forge picks its id and passes `--session-id NEW` (measured with a
-   real claude, framework-discuss/execution/runs/4.4-daily-use/u2-fork-measurement.md: the pair starts and the fork runs under NEW),
+   real claude, in the data history: framework-discuss/execution/runs/4.4-daily-use/u2-fork-measurement.md: the pair starts and the fork runs under NEW),
    writes its record under NEW with its profile, and sets FORGE_SESSION to NEW; the original session's record, which may belong to a
    live launcher, is never touched. A fork that gave its own `--session-id`, or of `-c` or a title, has no id of ours: no record.
 D. A fork `forge start` launched is switched in place: its session asks `forge switch @toy-b`, its launcher restarts claude with

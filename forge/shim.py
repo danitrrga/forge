@@ -3,7 +3,7 @@ project (`forge start @NAME ...`) and every other `claude` is the real one. `for
 calls.
 
 It is a function and not an executable: it exists only in an interactive shell, so a script, or another program's `claude -p`,
-never meets it. Two rules fix what it does (framework-discuss/research/profile-daily-measures.md):
+never meets it. Two rules fix what it does (in the data history: framework-discuss/research/profile-daily-measures.md):
 
 - `claude @notes.md` is a prompt today (the binary reads `@name` as a file mention), so a first argument starting with `@` is
   taken for a profile only when the probe says the project offers it (or that it is its default label); otherwise everything goes

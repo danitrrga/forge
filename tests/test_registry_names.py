@@ -56,7 +56,7 @@ OLD = ["config/" + "profiles", '"config", "' + 'profiles"', "PROFILE" + "_FIELDS
        "lib." + "profiles(", "lib." + "PROFILES"]
 NEW_DIR = re.compile(r'config/projects|"config", "projects"')
 # Never the registry: an excluded history or a file whose word has another sense (the measurement's N files).
-EXCLUDED = re.compile(r"^(docs/archive/|framework-discuss/|benchmarks/|design/)")
+EXCLUDED = re.compile(r"^(benchmarks/|design/)")
 SELF = "tests/test_registry_names.py"  # names the old ones to explain them
 
 
@@ -96,7 +96,7 @@ def at(rev):
     """Count the old names in commit `rev`, lines per name, the way the scan reads them."""
     for old in OLD:
         r = subprocess.run(["git", "-C", ROOT, "grep", "-n", "-F", "-e", old, rev, "--", ".",
-                            ":!docs/archive", ":!framework-discuss", ":!benchmarks", ":!design", ":!" + SELF],
+                            ":!benchmarks", ":!design", ":!" + SELF],
                            capture_output=True, text=True)
         lines = [l for l in r.stdout.splitlines() if not NEW_DIR.search(l)]
         print("%-22s %d line(s) at %s" % (old, len(lines), rev))
