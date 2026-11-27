@@ -350,7 +350,7 @@ def discuss_problems(skill, rounds):
     if not (steps.get(5) and "handful of rows" in steps[5]):
         out.append(("step 5 says a phase holds a handful of rows", "step 5 has no 'handful of rows'"))
     s6 = steps.get(6, "")
-    if not all(w in s6 for w in ("throwaway script", "outside the repo", "`researcher`")):
+    if not all(w in s6 for w in ("throwaway script", "inline", "writing no file", "`researcher`")):
         out.append(("step 6 sends a fork a throwaway script can settle to a researcher", "step 6: %r" % s6[:90]))
     head = "\n".join(lines[:12])
     for name, text in (("SKILL.md", head), ("rounds.md", rounds)):
@@ -385,7 +385,7 @@ GOOD_DISCUSS = ("---\nname: discuss\ndisable-model-invocation: true\n---\n"
                 "<!-- referent: cursor/plugins pstack/skills/poteto-mode/SKILL.md @b7b93c36be9b (the rules) -->\n"
                 "3. **Ask.** First check: what you understood, the smallest change that meets it. One or two obvious files: say so and offer plain Claude.\n"
                 "5. **Record.** A phase holds a handful of rows.\n"
-                "6. **Research.** A fork a throwaway script outside the repo can settle goes to a `researcher`.\n"
+                "6. **Research.** A fork a throwaway script run inline, writing no file, can settle goes to a `researcher`.\n"
                 "7. **Claim check.** Write the draft context.md only; decisions.tsv is already written by step 5. Launch `researcher` (`models.researcher.normal`): every claim of context.md and decisions.tsv, and who and what the change touches.\n"
                 "8. **Playback.** Per `references/playback.md`.\n")
 GOOD_ROUNDS = ("<!-- referent: cursor/plugins pstack/skills/poteto-mode/SKILL.md @b7b93c36be9b -->\n"
@@ -424,26 +424,27 @@ check("control: the real playback.md without its call-out bullet fails",
       [c for c, _ in playback_problems("\n".join(l for l in files["playback.md"].splitlines() if "Call outs" not in l))] == ["the playback calls out every agent-assumption and unexamined row"])
 
 # 01.2 fix g9: the discuss (step 6) has a researcher settle a fork with a small throwaway script, so researcher.md must allow that one probe beside its
-# findings file and its read-only Bash. 01.2 fix r1-SO1: the probe's home is named, the `$TMPDIR` of a folder `fwx scratch new` made, never the repo or home.
-# Seen red at 135b134 (the old researcher.md says only "outside the repo"):
-#   FAIL: researcher.md allows a throwaway probe script in the scratch folder's TMPDIR, never in the repo, when its prompt asks for one -> no 'throwaway', 'scratch', 'never in the repo' and 'prompt asks' in the paragraph on the file it writes
+# findings file and its read-only Bash. 01.2 fix g10: the probe runs inline on stdin and writes no file, so there is no home for it to name and the
+# findings file stays the only file the researcher writes.
+# Seen red at 9abdcd9 (researcher.md names a probe file in the `$TMPDIR` of a scratch folder; step 6 says "outside the repo"):
+#   FAIL: researcher.md allows a throwaway script run inline that writes no file, when its prompt asks for one -> no 'throwaway script', 'inline', 'writes no file' and 'prompt asks', or a `$TMPDIR` probe file, in the paragraph on the file it writes
 def researcher_problems(text):
     para = next((p for p in text.split("\n\n") if "the only file you write" in p or "only file" in p), "")
-    if not all(w in para for w in ("throwaway", "`$TMPDIR` of a folder `fwx scratch new` made", "never in the repo", "prompt asks")):
-        return [("researcher.md allows a throwaway probe script in the scratch folder's TMPDIR, never in the repo, when its prompt asks for one",
-                 "no 'throwaway', 'scratch', 'never in the repo' and 'prompt asks' in the paragraph on the file it writes")]
-    return []
+    if "$TMPDIR" not in para and all(w in para for w in ("throwaway script", "inline", "writes no file", "prompt asks")):
+        return []
+    return [("researcher.md allows a throwaway script run inline that writes no file, when its prompt asks for one",
+             "no 'throwaway script', 'inline', 'writes no file' and 'prompt asks', or a `$TMPDIR` probe file, in the paragraph on the file it writes")]
 
 
 for name, detail in researcher_problems(read("agents", "researcher.md")):
     check(name, False, detail)
-PROBE = "a throwaway probe script in the `$TMPDIR` of a folder `fwx scratch new` made, never in the repo or your home, when your prompt asks for one"
+PROBE = "a throwaway script run inline on stdin, which writes no file anywhere, when your prompt asks for one"
 GOOD_RESEARCHER = ("That is the only file you write, except " + PROBE + "; Bash is for commands "
                    "that change nothing.\n\nExtraction only.\n")
 check("control: the good researcher toy passes", researcher_problems(GOOD_RESEARCHER) == [])
 for label, text in [("no throwaway clause", GOOD_RESEARCHER.replace(", except " + PROBE, "")),
-                    ("a probe inside the repo", GOOD_RESEARCHER.replace("never in the repo or your home", "in the repo")),
-                    ("a probe with no scratch home", GOOD_RESEARCHER.replace("in the `$TMPDIR` of a folder `fwx scratch new` made, never in the repo", "outside the repo, never in the repo")),
+                    ("a probe that is not inline", GOOD_RESEARCHER.replace("run inline on stdin, ", "")),
+                    ("a probe that writes a file", GOOD_RESEARCHER.replace("writes no file anywhere", "writes its file in the `$TMPDIR` of a scratch folder")),
                     ("a probe nobody asked for", GOOD_RESEARCHER.replace("when your prompt asks for one", "whenever it likes"))]:
     check("control: " + label, len(researcher_problems(text)) == 1, "got %s" % researcher_problems(text))
 
