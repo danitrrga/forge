@@ -315,6 +315,17 @@ def main():
           "; ".join(filed_key_problems(rep_ref, template, step(skill, 5))))
     check("control: texts with no `filed:` record are caught", len(filed_key_problems("none filed", "## Outside\n## Evidence", "unfiled go in the `--why`")) == 3)
 
+    # 01.3 fix g11: step 5 puts reviewer and executor text (`outside:`, `filed:`) into a `--why`; inside double quotes a `$(...)` or backtick in it runs,
+    # so step 5 says once that such a `--why` goes through a single-quoted heredoc. Seen red at a504708:
+    #   FAIL: step 5 passes a `--why` that carries report text through a single-quoted heredoc -> step 5 has no `--why "$(cat <<'WHY'`; step 5 does not say the text is never pasted inside double quotes
+    def why_quoting_problems(step5):
+        return (["step 5 has no `--why \"$(cat <<'WHY'`"] if "`--why \"$(cat <<'WHY'`" not in step5 else []) + (
+            ["step 5 does not say the text is never pasted inside double quotes"] if "never pasted inside double quotes" not in step5 else [])
+    check("step 5 passes a `--why` that carries report text through a single-quoted heredoc", not why_quoting_problems(step(skill, 5)),
+          "; ".join(why_quoting_problems(step(skill, 5))))
+    check("control: a step 5 that quotes the `--why` in double quotes only is caught",
+          len(why_quoting_problems("putting each key in its `--why` as `filed: <where> - <KEY>`")) == 2)
+
     # 01.3 fix g4: the `consider` findings print once, in the report's Done (templates/phase/report.md); step 8.2 no longer pastes them again from the
     # run's raw `<n>-findings.json`. Seen red at a913be9:
     #   FAIL: step 8.2 does not paste the consider findings a second time from `<n>-findings.json` -> names ['`result.consider`', '`consider` findings']
