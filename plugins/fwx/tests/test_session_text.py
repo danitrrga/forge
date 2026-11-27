@@ -326,6 +326,17 @@ def main():
     check("control: a step 5 that quotes the `--why` in double quotes only is caught",
           len(why_quoting_problems("putting each key in its `--why` as `filed: <where> - <KEY>`")) == 2)
 
+    # r1-F1 (fix-2): step 6 passes the UI walkers' findings (screen content of the app under test) as `fwx wave fix --why "<findings>"`, the same
+    # fault step 5 fixed: inside double quotes a `$(...)` or backtick in a finding runs. Seen red at 0aeca30:
+    #   FAIL: step 6 passes the walkers' findings in `--why` through a single-quoted heredoc -> step 6 pastes `--why "<findings>"` inside double quotes; step 6 has no `--why "$(cat <<'WHY'`
+    def findings_why_problems(step6):
+        return (["step 6 pastes `--why \"<findings>\"` inside double quotes"] if '--why "<findings>"' in step6 else []) + (
+            ["step 6 has no `--why \"$(cat <<'WHY'`"] if "--why \"$(cat <<'WHY'" not in step6 else [])
+    check("step 6 passes the walkers' findings in `--why` through a single-quoted heredoc", not findings_why_problems(step(skill, 6)),
+          "; ".join(findings_why_problems(step(skill, 6))))
+    check("control: a step 6 that pastes the findings inside double quotes is caught",
+          len(findings_why_problems("`fwx wave fix --part-dir <part> --why \"<findings>\"`")) == 2)
+
     # 01.3 fix g4: the `consider` findings print once, in the report's Done (templates/phase/report.md); step 8.2 no longer pastes them again from the
     # run's raw `<n>-findings.json`. Seen red at a913be9:
     #   FAIL: step 8.2 does not paste the consider findings a second time from `<n>-findings.json` -> names ['`result.consider`', '`consider` findings']
