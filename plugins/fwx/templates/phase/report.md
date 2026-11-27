@@ -11,7 +11,7 @@
 <Each choice you made yourself because one option was clearly better, one line: the choice and why. `None` otherwise.>
 
 ## Outside
-<Each defect seen outside the work (`wave --run` `outside` and `findings.outside`): where, what, the fix, and the Linear key of step 5's filing when it was filed in this session, else `none filed`. `None` otherwise.>
+<Each defect seen outside the work (`wave --run` `outside` and `findings.outside`): where, what, the fix, and the Linear key of its `filed:` entry in step 5's stage row, else `none filed`. `None` otherwise.>
 
 ## Evidence
 <Commit `<sha>`, the command and its exit code, copied from the last `evidence` row of `audit.tsv`. A walk that did not finish is said here, not left out.>
