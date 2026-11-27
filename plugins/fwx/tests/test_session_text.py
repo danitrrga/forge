@@ -289,6 +289,36 @@ def main():
     check("control: a text that reads `result` or `findings.fil` of the run is caught",
           bool(wave_json_problems("read `result` and `findings.consider`")) and bool(wave_json_problems("read `findings.fil`")) and not wave_json_problems("`findings.consider` and `findings.outside`"))
 
+    # 01.3 fix g3: `wave --run --json` holds no Linear keys, so the texts take the key from step 5's filing of this session, else `none filed`, and
+    # step 5 no longer files "for the part report to read back from the stage rows". Seen red at a913be9:
+    #   FAIL: the report texts take a Linear key from step 5's filing, else `none filed` -> part-report.md still takes Linear keys from the run's json; part-report.md has no `none filed`; template Outside does not name step 5's filing; step 5 says the report reads outside items back from stage rows
+    def linear_key_problems(rep, tmpl, step5):
+        return (["part-report.md still takes Linear keys from the run's json"] if "their Linear keys" in rep else []) + (
+            ["part-report.md has no `none filed`"] if "none filed" not in rep else []) + (
+            ["part-report.md does not name step 5's filing"] if "step 5" not in rep else []) + (
+            ["template Outside does not name step 5's filing"] if "step 5" not in tmpl.split("## Outside")[-1].split("## Evidence")[0] else []) + (
+            ["step 5 says the report reads outside items back from stage rows"] if "reads them back from the stage rows" in step5 else [])
+    check("the report texts take a Linear key from step 5's filing, else `none filed`", not linear_key_problems(rep_ref, template, step(skill, 5)),
+          "; ".join(linear_key_problems(rep_ref, template, step(skill, 5))))
+    check("control: texts that read Linear keys from the run's json are caught",
+          len(linear_key_problems("take their Linear keys from it", "## Outside\n## Evidence", "because the part report reads them back from the stage rows")) == 5)
+
+    # 01.3 fix g4: the `consider` findings print once, in the report's Done (templates/phase/report.md); step 8.2 no longer pastes them again from the
+    # run's raw `<n>-findings.json`. Seen red at a913be9:
+    #   FAIL: step 8.2 does not paste the consider findings a second time from `<n>-findings.json` -> names ['`result.consider`', '`consider` findings']
+    def consider_twice(text):
+        return [w for w in ("`result.consider`", "`consider` findings") if w in text]
+    check("step 8.2 does not paste the consider findings a second time from `<n>-findings.json`", not consider_twice(s8), "names %s" % consider_twice(s8))
+    check("control: a step 8.2 that pastes `result.consider` after the report is caught", bool(consider_twice("then: the `consider` findings (`result.consider` of the run")))
+
+    # 01.3 fix g8: open `agent-assumption` rows of decisions.tsv are a source of the report's Assumptions, for a resume or the close. Seen red at a913be9:
+    #   FAIL: part-report.md takes Assumptions also from the open `agent-assumption` rows of decisions.tsv -> missing `agent-assumption` or decisions.tsv
+    def assumption_sources(text):
+        return [w for w in ("`agent-assumption`", "decisions.tsv") if w not in text]
+    check("part-report.md takes Assumptions also from the open `agent-assumption` rows of decisions.tsv", not assumption_sources(rep_ref),
+          "missing %s" % ", ".join(assumption_sources(rep_ref)))
+    check("control: a part-report.md that takes assumptions only from the orchestrator's own choices is caught", len(assumption_sources("from the choices you made yourself (rule 6)")) == 2)
+
     def closing_body(text):
         return [w for w in ("templates/phase/report.md", '--why "PR <url>"', '--why "commit <sha>"') if w not in text] + (
             [] if in_order(text, "templates/phase/report.md", "gh pr edit", "fwx stage <phase folder> closed") else ["the order template, gh pr edit, stage row"])
