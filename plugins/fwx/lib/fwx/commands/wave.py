@@ -17,7 +17,7 @@ and escalation, one line per wave and one at the end, and the chat answers a wor
 on `--resume` to refresh it, refused with `--plane factory` and `--unattended`; execute/run.py says how), prepares the part in process, exits as `wave new` does (1, 77, 2) before it
 starts anyone, then drives the part to its end with every agent an Orca worker (execute/run.py says how, execute/orca.py is the one module that
 talks to Orca) and prints one line, `run <R> <done|failed|needs-owner>: <why>`, exit 0, 1 and 3 for the three; it exits 2 when a live run already
-holds the branch (naming it and `--resume`) and when there is no base context to give a worker. `wave list` prints one line per run (id, part,
+holds the branch (naming it and `--resume`). `wave list` prints one line per run (id, part,
 branch, state, pid and whether it lives, open workers of the total, last step); `wave list --json` prints `{"runs": [...]}` with the planned waves, the workers
 and the last progress lines of each, which the Orca panel and chip read.
 
@@ -420,7 +420,10 @@ def do_step(step, argv):
         else:
             part = part or _part_of(top, run)
             args = {"run": run, "part_dir": part}
-            code, result = integrate.summary(".", part, run, _steps(top, run))
+            saved = run_mod.load_state(top, run) or {}
+            where = (saved.get("args") or {}).get("checkout")  # the run's own checkout, as `remove` reads it: its branch is that repo's
+            gone = where if where and not os.path.isdir(where) else None  # fails closed: this repo may hold a branch of the same name
+            code, result = integrate.summary(where if where and not gone else ".", part, run, _steps(top, run), saved.get("branch"), gone)
             if part is None:
                 say("no --part-dir and no call of run %s names one: gate none" % run)
         if run:

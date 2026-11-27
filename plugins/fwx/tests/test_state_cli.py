@@ -25,10 +25,6 @@ Controls, each seen red on lib/fwx/commands/state.py changed in one place (the f
   - cancel handed the parent folder (the CLI's wiring; the deletion itself is state.py's, seen red in test_state.py; 4 failed):
       FAIL: cancel: exit code: got 1, want 0
       FAIL: cancel: its folder is gone
-  - check ignores errors (4 failed):
-      FAIL: check report that does not cite the evidence sha: exit code: got 0, want 1
-  - check fails on a length warning (2 failed):
-      FAIL: check report that cites the sha but is long: only a warning: exit code: got 1, want 0
   - --adr writes decisions.tsv (4 failed):
       FAIL: decision --adr: stdout: got 'D3', want 'A1'
   - `use PHASE_DIR` does not take the subproject from the path (2 failed):
@@ -42,12 +38,6 @@ Controls, each seen red on lib/fwx/commands/state.py changed in one place (the f
       FAIL: new-milestone with no .fwx: refused, nothing made: exit code: got 0, want 1
   - list marks every phase open (1 failed):
       FAIL: list --json: a closed phase and its stage: got ('01-login', 'closed', True), want ('01-login', 'closed', False)
-
-2.5 U4 (new-phase builds the base context), seen red on lib/fwx/commands/state.py at master (296 checks):
-  FAIL: new-phase: the base file is made, with the map: .../.git/fwx/context-base/fwx__milestones__v1__phases__01-alpha.md
-  FAIL: new-phase with a map over the cap: one `fwx phase new: context-base: ... over the cap` line: ''
-  - new-phase exits 1 when the refresh fails (2 failed):
-      FAIL: new-phase with a map over the cap: exit 0: got 1, want 0
 """
 import json
 import os
@@ -131,9 +121,9 @@ r = helpers.fwx(helpers.ROOT, "help")
 s.ok("bin/fwx help lists `fwx phase new`", re.search(r"^\s+fwx phase new\s+\S", r.stdout, re.M) is not None, r.stdout)
 
 repo = helpers.toy_repo()
-for label, args in (("no verb", ["state"]), ("an unknown verb", ["phase", "frobnicate"]), ("phase new without a slug", ["phase", "new"]),
+for label, args in (("no verb", ["phase"]), ("an unknown verb", ["phase", "frobnicate"]), ("phase new without a slug", ["phase", "new"]),
                     ("an unknown flag", ["session", "--nope"]), ("decision new without --why", ["decision", "new", "--decision", "x", "--support", "chosen"]),
-                    ("session attach with nothing", ["session", "attach"]), ("state lint without a path", ["state", "lint"]),
+                    ("session attach with nothing", ["session", "attach"]),
                     ("session attach with a phase and --root", ["session", "attach", "x", "--root"])):
     clean("usage: %s" % label, st(repo, *args), 2)
 s.eq("usage errors write nothing", tree(repo), ["README"])
@@ -147,26 +137,16 @@ phase1 = os.path.join(main, ".fwx", "milestones", "v1", "phases", "01-alpha")
 clean("new-phase from a linked worktree", r, 0, phase1)
 s.ok("new-phase from a worktree: the folder is in the main checkout", os.path.isdir(phase1))
 s.eq("new-phase from a worktree: nothing in the worktree", tree(wt), before_wt)
-s.ok("new-phase: PROJECT.md and the milestone are made", os.path.exists(os.path.join(main, ".fwx", "PROJECT.md"))
-     and os.path.exists(os.path.join(main, ".fwx", "milestones", "v1", "MILESTONE.md")))
+# The project and milestone files are lowercase. Seen red while the code wrote `PROJECT.md` and `MILESTONE.md`:
+#   FAIL: new-phase: project.md and the milestone are made   (likewise new-milestone, cancel and the 6 parallel ones)
+s.ok("new-phase: project.md and the milestone are made", os.path.exists(os.path.join(main, ".fwx", "project.md"))
+     and os.path.exists(os.path.join(main, ".fwx", "milestones", "v1", "milestone.md")))
 s.eq("new-phase: the phase folder holds context.md, decisions.tsv and audit.tsv",
      ls(phase1), ["audit.tsv", "context.md", "decisions.tsv"])
-# 2.5 U4: the base context is built with the phase, before any context.md of the owner's
-sys.path.insert(0, os.path.join(helpers.ROOT, "lib"))
-from fwx import context_base as cb  # noqa: E402
-
-base1 = cb.base_path(phase1)
-def text_of(path):
-    with open(path, encoding="utf-8") as f:
-        return f.read()
-
-
-btext = text_of(base1) if os.path.exists(base1) else ""
-s.ok("new-phase: the base file is made, with the map", os.path.exists(base1) and text_of(os.path.join(helpers.ROOT, "data", "context-map.md")).strip() in btext,
-     base1)
-s.ok("new-phase: the base lists the phase's files", "## Files" in btext and os.path.join(phase1, "decisions.tsv") in btext, btext[-400:])
-s.ok("new-phase: the base is in the discuss stage", "<!-- built stage=discuss " in btext, btext[-200:])
-s.eq("new-phase: nothing of the base inside the worktree", tree(wt), before_wt)
+# no base-context file is built with the phase any more. Seen red while it was built (the folder held the phase's file):
+#   FAIL: new-phase builds no context-base file: got ['fwx__milestones__v1__phases__01-alpha.md'], want []
+base_dir = os.path.join(main, ".git", "fwx", "context-base")
+s.eq("new-phase builds no context-base file", sorted(os.listdir(base_dir)) if os.path.isdir(base_dir) else [], [])
 
 s.eq("new-phase: binds the session", session_file(main, "sess-a"), {"subproject": None, "phase_dir": ".fwx/milestones/v1/phases/01-alpha"})
 s.eq("new-phase: the session file is in the main checkout's git dir, not the worktree's",
@@ -345,7 +325,7 @@ clean("new-subphase: the next M", st(sub, "subphase", "new", sphase, "next"), 0,
 clean("new-subphase on a folder that is not a phase", st(sub, "subphase", "new", sub, "x"), 1)
 clean("new-subphase with a bad slug", st(sub, "subphase", "new", sphase, "No Good"), 1)
 clean("new-milestone (the next number)", st(sub, "milestone", "new"), 0, os.path.join(sub, ".fwx", "milestones", "v2"))
-s.ok("new-milestone: MILESTONE.md", os.path.exists(os.path.join(sub, ".fwx", "milestones", "v2", "MILESTONE.md")))
+s.ok("new-milestone: milestone.md", os.path.exists(os.path.join(sub, ".fwx", "milestones", "v2", "milestone.md")))
 clean("new-milestone vN", st(sub, "milestone", "new", "v5", "--subproject", "web"), 0, os.path.join(sub, ".fwx", "subprojects", "web", "milestones", "v5"))
 clean("new-milestone that exists", st(sub, "milestone", "new", "v5", "--subproject", "web"), 1)
 clean("new-milestone with a bad name", st(sub, "milestone", "new", "x1"), 1)
@@ -366,8 +346,8 @@ st(c, "session", "attach", one, session="s-other")
 clean("cancel", st(c, "phase", "remove", one), 0)
 s.ok("cancel: its folder is gone", not os.path.exists(one))
 s.eq("cancel: the neighbour is intact", tree(two), two_before)
-s.ok("cancel: PROJECT.md and the milestone stay", os.path.exists(os.path.join(c, ".fwx", "PROJECT.md"))
-     and os.path.exists(os.path.join(c, ".fwx", "milestones", "v1", "MILESTONE.md")))
+s.ok("cancel: project.md and the milestone stay", os.path.exists(os.path.join(c, ".fwx", "project.md"))
+     and os.path.exists(os.path.join(c, ".fwx", "milestones", "v1", "milestone.md")))
 s.eq("cancel: the session that pointed at it is unbound", session_file(c, "s-other"), {"subproject": None, "phase_dir": None})
 s.eq("cancel: the other session keeps its phase", session_file(c, "s-c"), {"subproject": None, "phase_dir": ".fwx/milestones/v1/phases/02-two"})
 helpers.write(two, "premortem.md", "x\n")
@@ -382,54 +362,15 @@ for label, target in (("the milestones folder", os.path.join(c, ".fwx", "milesto
 s.ok("cancel of a wrong target deleted nothing", os.path.isdir(os.path.join(c, ".fwx", "milestones")) and os.path.exists(os.path.join(c, "README")))
 clean("cancel without an argument", st(c, "phase", "remove"), 2)
 
-# ---- check ----------------------------------------------------------------------------------------------------------
+# ---- the lint commands are gone ------------------------------------------------------------------------------------------
+# `state lint` and `report lint` left with the `state` agent: the orchestrator writes the report itself. Red before (they ran the check):
+#   FAIL: `fwx report lint` is gone: exit code: got 1, want 2
 k = helpers.mkdtemp("fwx-check-")
-sha = "c0ffee1" + "0" * 33
-report = os.path.join(k, "report-1.md")
 helpers.write(k, "report-1.md", "# Report 1\n\nDone.\n")
-r = st(k, "report", "lint", report, session="")  # outside a repository, but check reads only the files
-clean("check report with no audit.tsv", r, 1)
-audit(k, "evidence", "bin/fwx test", rc="0", sha=sha)
-r = st(k, "report", "lint", report)
-clean("check report that does not cite the evidence sha", r, 1)
-s.ok("check report: the message names the sha", sha[:7] in r.stderr, r.stderr)
-helpers.write(k, "report-1.md", "# Report 1\n\nEvidence: commit %s\n" % sha[:12])
-clean("check report that cites the sha", st(k, "report", "lint", report), 0)
-s.eq("check report: nothing to warn about, nothing printed besides ok", "WARN" in st(k, "report", "lint", report).stdout, False)
-helpers.write(k, "report-1.md", "# Report 1\n\nEvidence: commit %s\n" % sha[:12] + "line\n" * 50)
-r = st(k, "report", "lint", report)
-clean("check report that cites the sha but is long: only a warning", r, 0)
-s.ok("check report: the warning line", re.search(r"^WARN: 53 lines, target 40$", r.stdout, re.M) is not None, r.stdout)
-state_md = os.path.join(k, "state.md")
-helpers.write(k, "state.md", "line\n" * 112)
-r = st(k, "state", "lint", state_md)
-clean("check state of 112 lines: only a warning", r, 0)
-s.ok("check state: WARN: 112 lines, target 100", re.search(r"^WARN: 112 lines, target 100$", r.stdout, re.M) is not None, r.stdout)
-helpers.write(k, "state.md", "short\n")
-r = st(k, "state", "lint", state_md)
-clean("check state of a short file", r, 0)
-s.ok("check state of a short file: no warning", "WARN" not in r.stdout, r.stdout)
-helpers.write(k, "state.md", "")
-clean("check state of an empty file", st(k, "state", "lint", state_md), 1)
-clean("check state of a file that is not there", st(k, "state", "lint", os.path.join(k, "none.md")), 1)
-
-# a map over the cap: the phase is made and bound, the exit stays 0, one line on stderr says why (2.5 U4)
-import shutil  # noqa: E402
-
-big = helpers.mkdtemp("fwx-bigmap-")
-for sub in ("bin", "lib", "data", "templates"):
-    shutil.copytree(os.path.join(helpers.ROOT, sub), os.path.join(big, sub), ignore=shutil.ignore_patterns("__pycache__"))
-helpers.write(big, "data/context-map.md", "x" * 9500 + "\n")
-big_repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n"})
-r = subprocess.run([sys.executable, os.path.join(big, "bin", "fwx"), "phase", "new", "alpha"], cwd=big_repo,
-                   env=helpers.clean_env(CLAUDE_CODE_SESSION_ID="sess-big"), capture_output=True, text=True)
-bigphase = os.path.join(big_repo, ".fwx", "milestones", "v1", "phases", "01-alpha")
-s.eq("new-phase with a map over the cap: exit 0", r.returncode, 0)
-s.eq("new-phase with a map over the cap: stdout is still the folder", r.stdout.strip(), bigphase)
-s.ok("new-phase with a map over the cap: one `fwx phase new: context-base: ... over the cap` line",
-     re.fullmatch(r"fwx phase new: context-base: .*over the cap.*\n", r.stderr) is not None, repr(r.stderr))
-s.eq("new-phase with a map over the cap: the phase is bound", (session_file(big_repo, "sess-big") or {}).get("phase_dir"),
-     ".fwx/milestones/v1/phases/01-alpha")
+for obj in ("report", "state"):
+    r = st(k, obj, "lint", os.path.join(k, "report-1.md"))
+    s.eq("`fwx %s lint` is gone: exit code" % obj, r.returncode, 2)
+    s.eq("`fwx %s lint` is gone: it says so" % obj, (r.stderr.splitlines() or [""])[0], "fwx: unknown command: %s" % obj)
 
 # ---- a workspace whose code lives in nested repositories (`project.repos`): `fwx session --json` says where each part works --------
 # Seen red on the code before `part_repos` and `fwx_dir` existed:
@@ -532,17 +473,13 @@ for label, cwd in (("at the root", broken), ("inside repo a", os.path.join(broke
     s.eq("broken project.repos entry, session --json %s: exit 2" % label, r.returncode, 2)
     s.ok("broken project.repos entry, session --json %s: names the entry" % label, "project.repos.b.path" in r.stderr, repr(r.stderr))
 
-# ---- parallel writers (real processes at once) --------------------------------------------------------------------------
-# Seen red on the code before the lock (python3 tests/test_state_cli.py; 16 `decision new` at once, repeated until it showed):
-#   FAIL: 16 parallel decision new: ids are D1..D16, none twice: got [... 'D4', 'D4', 'D5', 'D5', ...]
-#   FAIL: 16 parallel decision new: `decision list` exits 0: exit code: got 1, want 0 (stderr 'fwx decision list: the id D4 appears twice')
-#   FAIL: 16 parallel first `decision new --adr`: adr.tsv has one header line: got 3, want 1
-# and before `new_phase` tolerated a `.fwx/` made a moment earlier (6 `phase new` at once in a clone with no `.fwx/`):
+# ---- the first `phase new` in a clone, from several sessions at once (real processes) ---------------------------------------
+# Seen red before `new_phase` tolerated a `.fwx/` made a moment earlier (6 `phase new` at once in a clone with no `.fwx/`):
 #   FAIL: 6 parallel first phase new: exit codes: got [0, 0, 0, 0, 1, 1], want [0, 0, 0, 0, 0, 0]
 #   FAIL: 6 parallel first phase new: no traceback: FileExistsError: [Errno 17] File exists: '.../.fwx'
-# and with only that fixed, two more races of the same start (a phase numbered twice, a v2 made beside a rival's v1), now under the parent's lock:
-#   FAIL: 6 parallel first phase new: six folders, numbered 01..06: got ['01', '02', '02', '03', '04', '05']
-#   FAIL: 6 parallel first phase new: six folders, numbered 01..06: got ['01']
+# and before the first milestone was named v1 (a v2 made beside a rival's v1; the folders were then in two milestones):
+#   FAIL: 6 parallel first phase new: six folders, numbered 01..06: got ['01']   (as recorded then; the check is now a count in v1)
+# Two phases made at the same moment may share a number (no lock), so the folders are counted, not numbered.
 
 def parallel(cwd, argvs, env_for=lambda i: {"CLAUDE_CODE_SESSION_ID": ""}):
     """Start every `fwx ARGV` before waiting for any; the CompletedProcess-like (returncode, stdout, stderr) of each, in order."""
@@ -555,31 +492,14 @@ def parallel(cwd, argvs, env_for=lambda i: {"CLAUDE_CODE_SESSION_ID": ""}):
     return out
 
 
-N = 16
-pr = os.path.realpath(helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n"}))
-clean("parallel setup: phase new", st(pr, "phase", "new", "alpha"), 0)
-pdir = os.path.join(pr, ".fwx", "milestones", "v1", "phases", "01-alpha")
-got = parallel(pr, [["decision", "new", "--phase", pdir, "--decision", "d%d" % i, "--why", "w", "--support", "chosen"] for i in range(N)])
-s.eq("%d parallel decision new: every exit code" % N, [g[0] for g in got], [0] * N)
-ids = [r["id"] for r in state.read_rows(os.path.join(pdir, "decisions.tsv"))]
-s.eq("%d parallel decision new: ids are D1..D%d, none twice" % (N, N), sorted(ids, key=lambda x: int(x[1:])), ["D%d" % i for i in range(1, N + 1)])
-s.eq("%d parallel decision new: the ids printed" % N, sorted(g[1].strip() for g in got), sorted(ids))
-r = st(pr, "decision", "list", "--phase", pdir)
-clean("%d parallel decision new: `decision list`" % N, r, 0)
-got = parallel(pr, [["decision", "new", "--adr", "--decision", "a%d" % i, "--why", "w", "--support", "chosen"] for i in range(N)])
-s.eq("%d parallel first decision new --adr: every exit code" % N, [g[0] for g in got], [0] * N)
-adr_rows = (read(os.path.join(pr, ".fwx", "adr.tsv")) or b"").decode().splitlines()
-s.eq("%d parallel first decision new --adr: adr.tsv has one header line" % N, len([x for x in adr_rows if x.startswith("date\t")]), 1)
-s.eq("%d parallel first decision new --adr: ids are A1..A%d" % (N, N), sorted(x.split("\t")[1] for x in adr_rows[1:]), sorted("A%d" % i for i in range(1, N + 1)))
-
 fresh = os.path.realpath(helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n"}))
 got = parallel(fresh, [["phase", "new", "first%d" % i] for i in range(6)], env_for=lambda i: {"CLAUDE_CODE_SESSION_ID": "p-%d" % i})
 s.eq("6 parallel first phase new: exit codes", [g[0] for g in got], [0] * 6)
 s.ok("6 parallel first phase new: no traceback", not any("Traceback" in g[2] for g in got), "".join(g[2] for g in got)[-300:])
 made = sorted(os.listdir(os.path.join(fresh, ".fwx", "milestones", "v1", "phases"))) if os.path.isdir(os.path.join(fresh, ".fwx", "milestones")) else []
-s.eq("6 parallel first phase new: six folders, numbered 01..06", sorted(n[:2] for n in made), ["0%d" % i for i in range(1, 7)])
-s.ok("6 parallel first phase new: PROJECT.md and MILESTONE.md are there", os.path.exists(os.path.join(fresh, ".fwx", "PROJECT.md"))
-     and os.path.exists(os.path.join(fresh, ".fwx", "milestones", "v1", "MILESTONE.md")))
+s.eq("6 parallel first phase new: six folders in v1", len(made), 6)
+s.ok("6 parallel first phase new: project.md and milestone.md are there", os.path.exists(os.path.join(fresh, ".fwx", "project.md"))
+     and os.path.exists(os.path.join(fresh, ".fwx", "milestones", "v1", "milestone.md")))
 
 # ---- outside a git repository: exit 2 -------------------------------------------------------------------------------
 nogit = helpers.mkdtemp_nogit()

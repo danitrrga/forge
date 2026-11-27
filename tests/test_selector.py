@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """forge/selector.py and forge/render.py: the key selector, a list moved with the arrows and toggled with space
-(framework-discuss plan 4.4 U3a). Three layers, each tested on its own: `Selector.press` (a state machine fed key
+(in the data history: framework-discuss plan 4.4 U3a). Three layers, each tested on its own: `Selector.press` (a state machine fed key
 names), `read_keys` (the decoder of a terminal's bytes, fed through a real pty) and `run` (owns the terminal).
 
 Written first and run against a tree without forge/selector.py: "ImportError: cannot import name 'render' from 'forge'"

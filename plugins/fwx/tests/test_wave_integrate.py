@@ -19,6 +19,13 @@ Red before `summary` looked at the run's own gate (3.4 U8 fix, F3: `summary --ru
   FAIL: summary, an earlier run that never ran the gate, green evidence of HEAD from elsewhere: gate got 'pass': got ('pass', 0), want ('fail', 1)
   FAIL: summary, the run's own last gate is red, later green evidence: gate got 'pass': got ('pass', 0), want ('fail', 1)
 
+Red before `summary` compared the evidence with the cwd's HEAD (session e2e: `fwx wave --run R` from the main checkout said `fail`, from the phase worktree `pass`):
+  FAIL: summary, from the main checkout: gate got 'fail', head 'aeaaa3a3713aea44b255a1989b50b6ed61fcd5b2': got ('fail', 1, 'aeaaa3a3713aea44b255a1989b50b6ed61fcd5b2'), want ('pass', 0, '966fe74557919309c2ed1f4b8568c5cda333967d')
+
+Red before a recorded branch that is gone failed closed (the cwd's HEAD stood in for it and a green evidence of that HEAD read `pass`):
+  FAIL: summary, a recorded branch that does not exist: gate 'pass', head '25d0db57e9d1297baa549ee4beff462c5d7ca505', why '': got ('pass', 0, '25d0db57e9d1297baa549ee4beff462c5d7ca505', ''), want ('fail', 1, '', 'branch deleted-phase not found')
+The fixed commits read from the run's branch, not the cwd's HEAD: a plain check that was never red (the code was already right when it was written).
+
 Red before `next` existed (09.5 T52; case_next and case_next_rules, a conflict, a red check, findings, a lock, a final merge, a result that names no cause):
   FAIL: a conflict says next resolve -> no next: got None, want 'resolve'
   FAIL: next_step: one answer per case (AttributeError: module 'fwx.execute.integrate' has no attribute 'next_step'): got 0, want 12
@@ -621,8 +628,8 @@ def run_no_proc(R, sc):
 
 # ---------------------------------------------------------------------------------------------------- summary
 
-def summ(R, sc, *extra):
-    return sc.call(R, "summary", "--run", sc.run, *extra)
+def summ(R, sc, *extra, cwd=None):
+    return sc.call(R, "summary", "--run", sc.run, *extra, cwd=cwd)
 
 
 def case_summary(R, S):
@@ -687,6 +694,32 @@ def case_summary(R, S):
     ok_json(S, "summary, then the gate on the head (the re-entry)", sw.call(R, "integrate", "--part-dir", sw.part, "--run", sw.run, "--final"))
     r = summ(R, sw)
     S.eq("summary, control: the same run once its own gate passed: gate got %r" % (J(r) or {}).get("gate"), ((J(r) or {}).get("gate"), (J(r) or {}).get("why")), ("pass", ""))
+    # the answer is the same from any checkout of the repo: the gate compares the evidence with the head of the run's branch, not the cwd's
+    sm = Scene()
+    b = sm.agent("one", [("src/a.py", "a1\n", None)])
+    ok_json(S, "summary, from the main checkout: the merge and its gate", sm.integrate(R, b, extra=("--final",)))
+    d = os.path.join(sm.common, "fwx", "runs", sm.run)
+    with open(os.path.join(d, "state.json"), "w", encoding="utf-8") as f:
+        json.dump({"run": sm.run, "branch": "phase"}, f)
+    S.ok("summary, from the main checkout: it is on another head than the run's branch", sm.head(sm.repo) != sm.head(), "the checkouts share a head")
+    r = summ(R, sm, "--part-dir", sm.part, cwd=sm.repo)
+    v = J(r) or {}
+    S.eq("summary, from the main checkout: gate got %r, head %r" % (v.get("gate"), v.get("head")), (v.get("gate"), r.returncode, v.get("head")), ("pass", 0, sm.head()))
+    # a recorded branch that no longer exists fails closed: the cwd's HEAD does not stand in for it, even when the evidence is green on that HEAD
+    sg = Scene()
+    sg.evidence(0)
+    plant(sg, "integrate", {"findings": ["r1-F1"], "final": True}, {"ok": True, "merged": ["worktree-agent-one"], "verify": {"rc": 0}})  # a fixed finding to look up in a head that is not there
+    dg = os.path.join(sg.common, "fwx", "runs", sg.run)
+    os.makedirs(dg, exist_ok=True)
+    with open(os.path.join(dg, "state.json"), "w", encoding="utf-8") as f:
+        json.dump({"run": sg.run, "branch": "deleted-phase"}, f)
+    r = summ(R, sg, "--part-dir", sg.part)
+    v = J(r) or {}
+    S.eq("summary, a recorded branch that does not exist: gate %r, head %r, why %r" % (v.get("gate"), v.get("head"), v.get("why")),
+         (v.get("gate"), r.returncode, v.get("head"), v.get("why")), ("fail", 1, "", "branch deleted-phase not found"))
+    os.remove(os.path.join(d, "state.json"))  # a run that records no branch: today's behaviour, the cwd's HEAD
+    r = summ(R, sm, "--part-dir", sm.part, cwd=sm.repo)
+    S.eq("summary, a run with no recorded branch: the cwd's HEAD decides", ((J(r) or {}).get("gate"), r.returncode), ("fail", 1))
     sv = Scene()  # a run of `--revert` merges nothing: the gate is `fwx verify` on the head the revert made
     helpers.write(sv.cwd, "src/a.py", "a1\n")
     helpers.git(sv.cwd, "add", "-A")
@@ -752,6 +785,11 @@ def case_summary_report(R, S):
     S.eq("summary report: protected is the last final merge's", (J(summ(R, sp)) or {}).get("protected"), ["src/a.py"])
     S.eq("summary report, a run with a merge and no review: fixed is empty",
          ((J(summ(R, sp)) or {}).get("findings") or {}).get("fixed"), [])
+    # the commit of a fixed finding is looked up in the run's branch, from whichever checkout the answer is asked
+    with open(os.path.join(sc.common, "fwx", "runs", sc.run, "state.json"), "w", encoding="utf-8") as f:
+        json.dump({"run": sc.run, "branch": "phase"}, f)
+    elsewhere = (J(summ(R, sc, cwd=sc.repo)) or {}).get("findings", {}).get("fixed")
+    S.eq("summary report from the main checkout: fixed: the commit of the finding is the tip", elsewhere, [{"id": "r1-F1", "commit": tip, "severity": "high"}])
     sc.stop()
     sp.stop()
 
@@ -995,7 +1033,11 @@ MUTANTS = [
      "red evidence: gate"),
     ("summary ignores the sha of the evidence", case_summary, I, 'gate = "pass" if rc == "0" and sha == head and not why else "fail"', 'gate = "pass" if rc == "0" and not why else "fail"',
      "evidence of another sha: gate"),
-    ("summary takes any run's gate", case_summary, I, "why = _own_gate(run, steps) if run else None", "why = None", "an earlier run that never ran the gate"),
+    ("summary compares with the cwd's HEAD", case_summary, I, '% branch) or "") if branch else verify.head(top)', '% branch) or "") if False else verify.head(top)',
+     "summary, from the main checkout: gate"),
+    ("summary falls back to the cwd's HEAD for a recorded branch that is gone", case_summary, I, 'refs/heads/%s^{commit}" % branch) or ""', 'refs/heads/%s^{commit}" % branch) or verify.head(top)',
+     "a recorded branch that does not exist"),
+    ("summary takes any run's gate", case_summary, I, "(_own_gate(run, steps) if run else None)", "None", "an earlier run that never ran the gate"),
     ("summary ignores a red gate of the run", case_summary, I, 'if last.get("exit") != 0 or', "if False and", "the run's own last gate is red"),
     ("summary never finds the part", case_summary, W, 'if rec.get("args", {}).get("part_dir"):', "if False:", "from the run files: gate"),
     ("the report keeps a retry's outside items", case_summary_report, I, 'if step == "report" and res.get("next") == "merge":', 'if step == "report":',

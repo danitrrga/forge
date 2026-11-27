@@ -11,7 +11,7 @@ from forge.ui.model import Line, Span, printable
 
 FAMILY = {"executor": "build", "planner": "plan", "pre-mortem": "plan", "post-mortem": "plan", "reviewer": "check",
           "security-reviewer": "check", "review-verifier": "check", "ui-walker": "check", "ui-verifier": "check",
-          "researcher": "read", "state": "read", "decisions": "read", "demo": "read", "skill-proposer": "read"}
+          "researcher": "read", "decisions": "read", "demo": "read", "skill-proposer": "read"}
 DOT = {"build": "dot_build", "plan": "dot_plan", "check": "dot_check", "read": "dot_read"}
 # band kind -> (surface, icon glyph, icon role)
 BAND = {"refused": ("warn_band", "icon_refused", "warn"), "broken": ("error_band", "icon_broken", "error"),

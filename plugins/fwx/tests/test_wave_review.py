@@ -88,6 +88,9 @@ class World:
         r = R(self.S.cwd, "wave", "review", "--part-dir", self.S.part, "--run", run, "--from", frm or self.frm, "--to", to or self.to, *extra, env=self.env)
         return r, J(r) or {}
 
+    def dir_of(self, unit):
+        return self.dirs.setdefault(unit, helpers.mkdtemp("fwx-review-"))
+
     def path(self, unit, run=RUN):
         d = self.dirs.setdefault(unit, helpers.mkdtemp("fwx-review-"))
         return os.path.join(d, ".fwx-agent", run, unit, "report.json")
@@ -660,13 +663,77 @@ def case_fixer_retry(R, S):
         os.environ.update(saved_env)
 
 
-CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry]
+def case_recorded(R, S):
+    """`wave run` records each unit's worktree in state.json: a reviewer's or verifier's report is read from there, whatever path its line echoes."""
+    W = World()
+    W.review(R)
+    line = W.reply("r1", [finding("F1")])
+    helpers.write(W.run_dir(), "state.json", json.dumps({"workers": {"r1/1": {"unit": "r1", "worktree": W.dirs["r1"]}, "r1-verifier/1": {"unit": "r1-verifier", "worktree": W.dir_of("r1-verifier")}}}))
+    r, v = W.find(R, line.replace(W.path("r1"), ".fwx-agent/%s/r1/report.json" % RUN))
+    nxt(S, "a recorded reviewer is read though its line has no folder before .fwx-agent", v, "fix")
+    W = World()
+    W.review(R)
+    W.find(R, W.reply("r1", [finding("F%d" % i) for i in range(1, 5)]))
+    rows = [{"id": "r1-F%d" % i, "verdict": "fix", "severity": "medium", "reason": "x"} for i in range(1, 5)]
+    helpers.write(os.path.dirname(W.path("r1-verifier")), "report.json", json.dumps({"verdicts": rows}))
+    helpers.write(W.run_dir(), "state.json", json.dumps({"workers": {"r1-verifier/1": {"unit": "r1-verifier", "worktree": W.dirs["r1-verifier"]}}}))
+    r, v = W.say_verdicts(R, "verdicts .fwx-agent/%s/r1-verifier/report.json" % RUN)
+    nxt(S, "a recorded verifier is read though its line has no folder before .fwx-agent", v, "fix")
+
+
+def case_routes(R, S):
+    """A finding on a file under `.fwx/` (executors may not write there) goes to `consider` before the verifier threshold, and an unverified `low`
+    one goes to `consider` instead of a fix round."""
+    W = World()
+    W.review(R)
+    fx = [finding("F%d" % i, file=f) for i, f in enumerate((".fwx/milestones/v1/plan.md", "/abs/repo/.fwx/ctx.md", "sub/.fwx/x.md"), 1)]
+    r, v = W.find(R, W.reply("r1", fx + [finding("F4")]))
+    nxt(S, "3 findings under .fwx/ and 1 real one: no verifier, the real one is fixed", v, "fix")
+    S.eq("findings under .fwx/: only the real one is fixed, the others are listed", (v.get("ids"), [c["id"] for c in v.get("consider") or []]), (["r1-F4"], ["r1-F1", "r1-F2", "r1-F3"]))
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1", file=".fwx/plan.md")], out=[outside(where=".fwx/plan.md:93", size="large")]))
+    S.eq("a finding and a large outside item under .fwx/ are both listed, none fixed or filed", (v.get("next"), v.get("ids"), len(v.get("consider") or []), v.get("file")), ("done", [], 2, []))
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1", severity="low"), finding("F2", severity="medium")]))
+    S.eq("an unverified low finding is listed, a medium one is fixed", (v.get("ids"), [c["id"] for c in v.get("consider") or []]), (["r1-F2"], ["r1-F1"]))
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1", severity="low")]))
+    nxt(S, "a pass of one low finding is done", v, "done")
+    W = World()
+    r, v = W.review(R)
+    text = read(v["reviewers"][0]["brief"])
+    S.ok("the reviewer's brief says `.fwx/` files are not reviewable", "not reviewable" in text, text[-500:])
+
+
+def case_goal_and_ui(R, S):
+    """The reviewer's brief gives the phase goal (the Intent of context.md) and, for a part with a UI task, the paths under `Approved UI`;
+    a part with no UI task gets no such section (context.md criterion 2).
+
+    Seen red before the code: FAIL: a UI part: the reviewer's brief gives the phase goal / the approved prototypes (the brief held the
+    context.md path and the plan's criteria only)."""
+    ctx = "# context\n\n## Intent\nShip the one-home rule for the working documents.\n\n## What success means\n1. one home\n\n## Approved UI\ndemo/figure-b.html\n\n## Research\nNone.\n"
+    for label, tasks, ui in (("a UI part", TASKS + [wp.task("T3", 3, ["web/page.html"], ui=True)], True), ("a part with no UI task", TASKS, False)):
+        W = World(tasks=tasks)
+        helpers.write(W.S.phase, "context.md", ctx)
+        r, v = W.review(R)
+        text = read(v["reviewers"][0]["brief"]) if v.get("reviewers") else ""
+        S.ok("%s: the reviewer's brief gives the phase goal" % label, "Ship the one-home rule for the working documents." in text, text[:600])
+        S.ok("%s: the reviewer's brief %s the approved prototypes" % (label, "gives" if ui else "has no section of"),
+             ("demo/figure-b.html" in text and os.path.join(W.S.phase) in text) == ui and ("## APPROVED UI" in text) == ui, text[:900])
+        sec = read(W.review(R, "--security")[1]["reviewers"][1]["brief"])
+        S.ok("%s: the security reviewer's brief has neither" % label, "Ship the one-home rule" not in sec and "APPROVED UI" not in sec, sec[:400])
+
+
+CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry, case_recorded, case_routes, case_goal_and_ui]
 V_ = "lib/fwx/execute/review.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [
     ("the verifier runs on any item (the rule at d348f8d)", case_threshold, V_, "THRESHOLD = 3\n", "THRESHOLD = 0\n",
      "3 findings go to the fixer -> next verify"),
-    ("the verifier runs from three items", case_threshold, V_, "if len(items) > THRESHOLD:", "if len(items) >= THRESHOLD:",
+    ("the verifier runs from three items", case_threshold, V_, "if sum(not _under_fwx(i) for i in items) > THRESHOLD:", "if sum(not _under_fwx(i) for i in items) >= THRESHOLD:",
      "3 findings go to the fixer -> next verify"),
     ("the verifier runs from five items", case_threshold, V_, "THRESHOLD = 3\n", "THRESHOLD = 4\n",
      "4 findings go to the verifier -> next fix"),
@@ -688,7 +755,7 @@ MUTANTS = [
      "a report where looked_at is empty relaunches"),
     ("looked_at=0 on the line is read", case_misses, V_, "    if int(m.group(2)) == 0:\n        return None, None\n", "    if False:\n        return None, None\n",
      "looked_at=0 on the line is not read"),
-    ("any path that names a report is read", case_misses, V_, 'if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):\n        return None\n',
+    ("any path that names a report is read", case_misses, V_, 'if not ("/" + path).endswith(_tail(run, unit)) or ".." in path.split("/"):\n        return None\n',
      'if ".." in path.split("/"):\n        return None\n',
      "the report of another unit is not read"),
     ("a path that climbs is read", case_misses, V_, '.endswith(_tail(run, unit)) or ".." in path.split("/"):\n        return None\n', '.endswith(_tail(run, unit)):\n        return None\n',
@@ -718,11 +785,11 @@ MUTANTS = [
      "the unit of the fixer that follows the verifier"),
     ("the fixer's unit is not returned", case_threshold, V_, "**dict(common, unit=unit))", "**dict(common, unit=None))",
      "3 findings: the unit of the fixer that follows"),
-    ("a low `fix` verdict is fixed (D25 undone)", case_verdicts, V_, 'severity == "low"\n', 'severity == "never"\n',
+    ("a low `fix` verdict is fixed (D25 undone)", case_verdicts, V_, 'severity == "low")\n', 'severity == "never")\n',
      "D25: a low `fix` verdict is not fixed, a medium and a high one are"),
     ("a verdict `consider` is fixed", case_verdicts, V_, 'elif verdict == "consider":', 'elif verdict == "fix":',
      "consider: id, file, line, claim, severity"),
-    ("the verdicts of any unit are read", case_verdicts, V_, 'if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):\n        return None, ""', 'if False:\n        return None, ""',
+    ("the verdicts of any unit are read", case_verdicts, V_, 'if not ("/" + path).endswith(_tail(run, unit)) or ".." in path.split("/"):\n        return None, ""', 'if False:\n        return None, ""',
      "the verdicts of another unit are not read"),
     ("a verdict missing for an id is read", case_verdicts, V_, '    if missing:\n        return None, "no verdict', '    if False:\n        return None, "no verdict',
      "a verdict missing for an id relaunches the verifier"),
@@ -730,8 +797,12 @@ MUTANTS = [
      "a verdict that is none of the four groups relaunches"),
     ("a protected path does not end the flow with the owner", case_verdicts, V_, ') if protected else ("done"', ') if False else ("done"',
      "nothing to fix but a protected path: the owner"),
-    ("a large outside item is filed when dismissed", case_verdicts, V_, 'if _large(outside_of, ident) and verdict == "fix":', "if _large(outside_of, ident):",
+    ("a large outside item is filed when dismissed", case_verdicts, V_, 'if _large(outside_of, ident) and verdict == "fix" and not forced:', "if _large(outside_of, ident) and not forced:",
      "a dismissed large outside item is not filed"),
+    ("the prototypes go to a part with no UI task", case_goal_and_ui, V_, 'if any(x["ui"] for x in data["tasks"]) else None', "if True else None",
+     "a part with no UI task: the reviewer's brief has no section of the approved prototypes"),
+    ("the reviewer gets no goal", case_goal_and_ui, V_, 'plan.section(owner["context"], "Intent")', "None",
+     "the reviewer's brief gives the phase goal"),
     ("one of --report and --verdicts is not needed", case_usage, W_, '(("--report" in parsed[0]) == ("--verdicts" in parsed[0]))', '(("--report" in parsed[0]) and ("--verdicts" in parsed[0]))',
      "usage (neither --report nor --verdicts)"),
 ]

@@ -51,7 +51,7 @@ the first FAIL line it printed:
 
 Unit 2 (the write half). Cases: the refusals of `apply`, each with exit 2, its message and the repository unchanged (every path
 with size and mtime, `.git` included, and `git status --porcelain --ignored`); `apply` in a worktree (blob of each kept file,
-CRLF, binary and symlink included; each purged file gone; `state.phases`, `state.last_stage`; MILESTONE.md; nothing written in
+CRLF, binary and symlink included; each purged file gone; `state.phases`, `state.last_stage`; milestone.md; nothing written in
 the main checkout); `refs --rewrite|--prefix` and its refusals; the commit and the proof that every removed file comes back
 with `git show <base>:<path>`; `leftovers` (dry run, refusals, `--apply`); a failure in the middle of `apply`, of a rollback,
 of `refs` and of `leftovers`; a process killed in the middle; re-entrance after a merge.
@@ -420,8 +420,8 @@ s.ok("... and no phase is from_roadmap", dj2 is not None and not any(p["from_roa
 
 # ---- 6: scopes ------------------------------------------------------------------------------------------------------
 s.eq("scopes", d["scopes"], [{"src": ".planning", "dest": ".fwx"}, {"src": ".planning/workstreams/ws1", "dest": ".fwx/subprojects/ws1"}])
-act(".planning/workstreams/ws1/PROJECT.md", "keep", "project", ".fwx/subprojects/ws1/PROJECT.md")
-act(".planning/PROJECT.md", "keep", "project", ".fwx/PROJECT.md")
+act(".planning/workstreams/ws1/PROJECT.md", "keep", "project", ".fwx/subprojects/ws1/project.md")
+act(".planning/PROJECT.md", "keep", "project", ".fwx/project.md")
 act(".planning/workstreams/ws1/STATE.md", "purge", "machine-state")
 
 # ---- 7: backlog -----------------------------------------------------------------------------------------------------
@@ -707,12 +707,20 @@ refusal("apply with a staged change outside .planning/", wt, ["apply"], "not cle
 
 repo, wt = world()
 roots = (wt, os.path.join(repo, ".git"))
+helpers.write(wt, ".fwx/project.md", "mine\n")
+helpers.git(wt, "add", ".fwx/project.md")
+helpers.git(wt, "commit", "-q", "-m", "a .fwx/project.md of its own")
+r = refusal("apply with a destination that exists (.fwx/project.md)", wt, ["apply"], ".fwx/project.md exists", roots)
+with open(os.path.join(wt, ".fwx/project.md"), encoding="utf-8") as fh:
+    s.eq("... destination existed and was overwritten", fh.read(), "mine\n")
+
+# an owner's PROJECT.md (not yet renamed) is in the way as much as a project.md: state.project_file would prefer the moved file
+repo, wt = world()
+roots = (wt, os.path.join(repo, ".git"))
 helpers.write(wt, ".fwx/PROJECT.md", "mine\n")
 helpers.git(wt, "add", ".fwx/PROJECT.md")
 helpers.git(wt, "commit", "-q", "-m", "a .fwx/PROJECT.md of its own")
-r = refusal("apply with a destination that exists (.fwx/PROJECT.md)", wt, ["apply"], ".fwx/PROJECT.md exists", roots)
-with open(os.path.join(wt, ".fwx/PROJECT.md"), encoding="utf-8") as fh:
-    s.eq("... destination existed and was overwritten", fh.read(), "mine\n")
+refusal("apply with a .fwx/PROJECT.md of the owner's", wt, ["apply"], ".fwx/PROJECT.md exists", roots)
 
 repo, wt = world()
 roots = (wt, os.path.join(repo, ".git"))
@@ -790,10 +798,10 @@ s.eq("the workstream's phases are in v1, v2 and v3 and closed where their pairin
      [("v1", "01-one", "closed"), ("v2", "03-two", "closed"), ("v2", "05-three", None), ("v3", "08-four", "closed")])
 rows = state.read_rows(Path(wt) / ".fwx/milestones/v2/phases/01-a/audit.tsv")
 s.eq("the stage row of a closed phase: kind, sha, detail", [(x["kind"], x["sha"], x["detail"]) for x in rows], [("stage", base, "closed migrated-from-gsd " + base)])
-ms_text = open(os.path.join(wt, ".fwx/milestones/v2/MILESTONE.md"), encoding="utf-8").read()
-s.ok("MILESTONE.md carries the base SHA, the date, the counts and the recovery command",
+ms_text = open(os.path.join(wt, ".fwx/milestones/v2/milestone.md"), encoding="utf-8").read()
+s.ok("milestone.md carries the base SHA, the date, the counts and the recovery command",
      base in ms_text and re.search(r"Date: \d{4}-\d{2}-\d{2}", ms_text) and "kept" in ms_text and "git show %s:.planning/<path>" % base in ms_text, ms_text)
-s.ok("MILESTONE.md is the framework's template (a Goal and a Scope section, no placeholder left)",
+s.ok("milestone.md is the framework's template (a Goal and a Scope section, no placeholder left)",
      "## Goal" in ms_text and "## Scope" in ms_text and "<vN>" not in ms_text and "<What is true" not in ms_text and "<what the" not in ms_text, ms_text)
 s.ok("the ROADMAP-only phase got its section as gsd-roadmap-entry.md",
      open(os.path.join(wt, road_dest, "gsd-roadmap-entry.md"), encoding="utf-8").read().startswith("### Phase 3: "), road_dest)
@@ -1016,11 +1024,26 @@ s.ok("... says everything moved was put back", "put back" in err and "simulated:
 s.eq("... every file, ignored ones included, is where it was", content(repo), c0)
 s.eq("... and git status is the same", porcelain(repo), s0)
 
+# a milestone converted before the rename holds `MILESTONE.md`: a second apply makes no `milestone.md` beside it
+# Seen red with the generator checking only the lowercase path: staged ['A\t.fwx/milestones/v2/milestone.md', 'R100\t.planning/phases/02.1-b/02.1-02-CONTEXT.md\t.fwx/milestones/v2/phases/02.1-b/02.1-02-CONTEXT.md']
+repo, wt = world()
+run(wt, "apply")
+helpers.git(wt, "mv", ".fwx/milestones/v2/milestone.md", ".fwx/milestones/v2/MILESTONE.md")
+helpers.git(wt, "commit", "-q", "-m", "convert, with an upper-case milestone file")
+wx = helpers.add_worktree(repo, "upper")
+helpers.write(wx, ".planning/phases/02.1-b/02.1-02-CONTEXT.md", "# context\n")
+helpers.git(wx, "add", "-A")
+helpers.git(wx, "commit", "-q", "-m", "a branch that adds to .planning/")
+helpers.git(wt, "-c", "merge.directoryRenames=false", "merge", "--no-edit", "-q", "upper")
+s.eq("apply over an upper-case MILESTONE.md exits 0", run(wt, "apply").returncode, 0)
+s.eq("... and it makes no milestone.md beside it",
+     sorted(l for l in helpers.git(wt, "diff", "--cached", "--name-status").splitlines() if l.lower().endswith("milestone.md")), [])
+
 # ---- U2 4: re-entrance ---------------------------------------------------------------------------------------------------------
 repo, wt = world()
 run(wt, "apply")
 helpers.git(wt, "commit", "-q", "-m", "convert")
-mil0 = open(os.path.join(wt, ".fwx/milestones/v2/MILESTONE.md"), "rb").read()
+mil0 = open(os.path.join(wt, ".fwx/milestones/v2/milestone.md"), "rb").read()
 aud0 = open(os.path.join(wt, ".fwx/milestones/v2/phases/02.1-b/audit.tsv"), "rb").read()
 wx = helpers.add_worktree(repo, "extra")
 helpers.write(wx, ".planning/extra/n.md", "# new\n")
@@ -1035,7 +1058,7 @@ s.eq("... it converted only those two files (and added its base to the bases fil
     "M\t.fwx/migrate-gsd-bases.md",
     "R100\t.planning/extra/n.md\t.fwx/extra/n.md",
     "R100\t.planning/phases/02.1-b/02.1-02-CONTEXT.md\t.fwx/milestones/v2/phases/02.1-b/02.1-02-CONTEXT.md"]))
-s.eq("... MILESTONE.md is as it was", open(os.path.join(wt, ".fwx/milestones/v2/MILESTONE.md"), "rb").read(), mil0)
+s.eq("... milestone.md is as it was", open(os.path.join(wt, ".fwx/milestones/v2/milestone.md"), "rb").read(), mil0)
 s.eq("... and the stage rows are as they were", open(os.path.join(wt, ".fwx/milestones/v2/phases/02.1-b/audit.tsv"), "rb").read(), aud0)
 helpers.git(wt, "commit", "-q", "-m", "convert the rest")
 helpers.write(wt, ".planning/extra/n.md", "# the same destination again\n")
@@ -1407,7 +1430,7 @@ for rel in (".planning/PROJECT.md", ".planning/knowledge/a.md", ".planning/phase
             ".planning/phases/03-c/purged.md"):
     wbytes(lrepo, rel, b"x\n")
 wbytes(lroot, "outside.txt", b"x\n")
-MAPPING = {".planning/PROJECT.md": ".fwx/PROJECT.md", ".planning/knowledge/a.md": ".fwx/knowledge/a.md",
+MAPPING = {".planning/PROJECT.md": ".fwx/project.md", ".planning/knowledge/a.md": ".fwx/knowledge/a.md",
            ".planning/phases/01-a/x.md": ".fwx/milestones/v1/phases/01-a/x.md",
            ".planning/phases/02-b/y.md": ".fwx/milestones/v1/phases/02-b/y.md"}     # 03-c holds only a file the conversion purges
 LINK_SRC, LINK_DEST = ".planning/phases/01-a/L", ".fwx/milestones/v1/phases/01-a/L"
@@ -1661,6 +1684,16 @@ s.eq("D4 refs --prefix on it writes the same rule apply wrote (never .fwx/workst
 r = run(wt, "refs", "--base", base4, "--prefix", ".gitignore")
 s.eq("D4 refs --prefix on the root .gitignore leaves the handled line alone (no second twin, no rewrite of the old line)",
      (r.returncode, rd(os.path.join(wt, ".gitignore"))), (0, WSIGN + "/.fwx/subprojects/*/private/\n"))
+
+# a .gitignore line naming the project document: the migrated file is `project.md` (classify_tracked lowers it), so the twin names that
+# (CodeRabbit PR 279: the twin kept `PROJECT.md`, which names no file on a case-sensitive filesystem and left the migrated file unignored.
+# Failed before the fix: "FAIL: D4 ... the twins name project.md ...: got '...\n/.fwx/subprojects/*/PROJECT.md\n...\n/.fwx/PROJECT.md\n'")
+PSIGN = "/.planning/workstreams/*/PROJECT.md\n/.planning/PROJECT.md\n"
+repo, wt = mini({".gitignore": PSIGN, ".planning/workstreams/ws1/PROJECT.md": "# W\n"})
+r = run(wt, "apply", "--close", "1")
+s.eq("D4 apply exits 0 with a .gitignore that names PROJECT.md", r.returncode, 0)
+s.eq("D4 ... the twins name project.md, the file apply moved them to",
+     rd(os.path.join(wt, ".gitignore")), "/.planning/workstreams/*/PROJECT.md\n/.fwx/subprojects/*/project.md\n/.planning/PROJECT.md\n/.fwx/project.md\n")
 
 # ---- D5: apply --close on a phase whose only content is its ROADMAP entry keeps its folder, its entry and its closing row ----------------
 repo, wt = mini()
@@ -2084,7 +2117,7 @@ s.eq("DTC-72 refs list a relative path that climbs to the root, with the real ne
       ("apps/web/src/e2e/a.spec.ts", 2, "../../../../.planning/REQUIREMENTS.md", "moved", "../../../../.fwx/milestones/v1/REQUIREMENTS.md"),
       ("apps/web/src/e2e/a.spec.ts", 5, "../../../../.planning/STATE.md", "purged", None),
       ("docs/vision.md", 1, "../.planning/REQUIREMENTS.md", "moved", "../.fwx/milestones/v1/REQUIREMENTS.md"),
-      ("docs/vision.md", 1, ".planning/PROJECT.md", "moved", ".fwx/PROJECT.md")])
+      ("docs/vision.md", 1, ".planning/PROJECT.md", "moved", ".fwx/project.md")])
 rr = run(wt, "apply", "--close", "1")
 s.eq("DTC-72 apply exits 0", rr.returncode, 0)
 base72 = helpers.git(wt, "rev-parse", "HEAD").strip()
@@ -2095,7 +2128,7 @@ s.eq("DTC-72 --rewrite changes each relative path to the new place of its file, 
      (rd(os.path.join(wt, "apps/web/src/e2e/a.spec.ts")), rd(os.path.join(wt, "docs/vision.md"))),
      (SPEC.replace("../../../../.planning/phases/01-alpha/01-CONTEXT.md", REL)
       .replace("../../../../.planning/REQUIREMENTS.md", "../../../../.fwx/milestones/v1/REQUIREMENTS.md"),
-      VISION.replace("](../.planning/REQUIREMENTS.md)", "](../.fwx/milestones/v1/REQUIREMENTS.md)").replace("](.planning/PROJECT.md)", "](.fwx/PROJECT.md)")))
+      VISION.replace("](../.planning/REQUIREMENTS.md)", "](../.fwx/milestones/v1/REQUIREMENTS.md)").replace("](.planning/PROJECT.md)", "](.fwx/project.md)")))
 helpers.git(wt, "reset", "-q", "--hard")
 r = run(wt, "refs", "--base", base72, "--prefix", "docs/vision.md")
 s.ok("DTC-72 --prefix changes `.planning` to the real new path after a `../` run too, and keeps the run",
@@ -2182,7 +2215,7 @@ DOC75 = ("state: .planning/STATE.md\nplan: .planning/phases/01-alpha/01-01-PLAN.
          "folder: .planning/phases/01-alpha/\ntool: .planning\nunknown: .planning/other.txt\nrel: ../.planning/PROJECT.md\n")
 DOC75_WANT = ("state: .planning/STATE.md\nplan: .planning/phases/01-alpha/01-01-PLAN.md\n"
               "context: .fwx/milestones/v1/phases/01-alpha/01-CONTEXT.md\nfolder: .fwx/milestones/v1/phases/01-alpha/\n"
-              "tool: .fwx\nunknown: .fwx/other.txt\nrel: ../.fwx/PROJECT.md\n")
+              "tool: .fwx\nunknown: .fwx/other.txt\nrel: ../.fwx/project.md\n")
 repo, wt = mini({"docs/guide.md": DOC75})
 rr = run(wt, "apply", "--close", "1")
 s.eq("DTC-75 apply exits 0", rr.returncode, 0)

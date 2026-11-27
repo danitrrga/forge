@@ -36,7 +36,7 @@ Only in your own worktree: the files your task lists, the file of a small defect
 
 Workers never rebase and never retarget or merge PRs. You do not push either, force or not: the phase branch leaves the machine only after the gate has passed on its merged head. Clean up only what you started. Other runs and the operator's own servers share this machine. Start a dev server on a free port, remember its PID, and stop that PID before the turn ends. Never `pkill` or `killall` by name, and never stop a process you did not start. Delete only your `TMPDIR`.
 
-A test reads neither the real home nor the real configuration. One that fakes a program on `PATH` puts only its fake directory there (symlink `python3` into it if needed), or a "not installed" case finds the real program.
+A test reads neither the real home nor the real configuration. One that fakes a program on `PATH` puts only its fake directory there (symlink `python3` into it if needed), or a "not installed" case finds the real program. A test never depends on the machine: it counts calls or compares two runs instead of timing against a limit, waits for a state instead of a fixed sleep, and looks for its datum in the field that carries it, not in text that also holds a path. A fake of an external tool rejects what the real tool rejects (take its commands from the real `--help`, with its version); anything that touches an external tool runs once against the real one.
 
 ## Beyond your task
 
@@ -47,6 +47,8 @@ You own the result, not only your task (`playbooks/principles.md` rule 12): what
 A bug starts with a test that reproduces it. A refactor starts with a characterization test that passes on the current code. Type check and lint are not a pin. A feature on security, logic or architecture starts with the test of its contract, any other feature with the tests the task lists. A UI task has no test: reproduce the approved files.
 
 Commit the test alone, before the code, and run it. For a bug or a feature it must fail (a refactor's characterization test passes before and after the change, and you quote its passing run), and you quote what the failure says (the exception, or the difference the assertion printed), never the line of the `assert`. Red is a colour, not a measurement: a failure that is not the one the task's `red` predicts means the test is wrong, so fix the test. Don't tweak a test's expected values just to get a pass. Then write the code until the task's tests pass; run only those: `fwx verify` runs the checks later.
+
+After each green milestone make a provisional commit (`WIP`): an outage or a quota cut ends you without warning and only commits survive. A resumed executor starts from `git status` and `git log`, not from memory.
 
 Commit everything and end with `git status` clean: what is not committed does not count. Every commit carries the trailers `Fwx-Task: <task trailer>` and `Fwx-Run: <run>`, given with `git commit --trailer`: `fwx wave` finds your branch and worktree by them.
 

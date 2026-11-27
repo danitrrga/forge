@@ -122,7 +122,18 @@ def outside_problem(rep, who, linear):
     return None
 
 
-def _read(line, run, unit, linear):
+def recorded_file(top, run, unit, echoed):
+    """The report.json to read: the one in the worktree `wave run` recorded for the unit's newest attempt (`workers` of state.json, newest last), since the
+    path an agent echoes can be relative to its own worktree; `echoed` only where the run records no such unit."""
+    try:
+        with open(os.path.join(config.fwx_dir(top), "runs", run, "state.json"), encoding="utf-8") as f:
+            worktree = [w["worktree"] for w in json.load(f)["workers"].values() if w["unit"] == unit][-1]
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        return echoed
+    return os.path.join(worktree, ".fwx-agent", run, unit, "report.json")
+
+
+def _read(top, line, run, unit, linear):
     """(report, worktree, rejection): the report the line names, or None for a miss. `rejection` is the reason when the report was read but
     is one to write again (its `outside`), and then the report is None too."""
     m = EXEC_LINE.match(last_line(line))
@@ -130,10 +141,11 @@ def _read(line, run, unit, linear):
         return None, None, None
     path = m.group(2).replace("\\", "/")
     tail = "/.fwx-agent/%s/%s/report.json" % (run, unit)
-    if not path.endswith(tail) or ".." in path.split("/"):
+    if not ("/" + path).endswith(tail) or ".." in path.split("/"):
         return None, None, None
+    file = recorded_file(top, run, unit, m.group(2))
     try:
-        with open(m.group(2), encoding="utf-8") as f:
+        with open(file, encoding="utf-8") as f:
             rep = json.load(f)
     except (OSError, ValueError):
         return None, None, None
@@ -146,7 +158,7 @@ def _read(line, run, unit, linear):
     why = outside_problem(rep, "executor", linear)
     if why:
         return None, None, why
-    return rep, path[:-len(tail)], None
+    return rep, file.replace("\\", "/")[:-len(tail)], None
 
 
 def _chain(steps, unit):
@@ -243,7 +255,7 @@ def judge(cwd, part_dir, run, unit, line, plane, steps):
     if top is None:
         raise WaveError("not inside a git repository: %s" % cwd)
     linear = bool(config.load(top)["project"].get("linear_project"))  # an unfixed `outside` item needs its key only where there is a Linear project
-    rep, worktree, rejection = _read(line, run, unit, linear)
+    rep, worktree, rejection = _read(top, line, run, unit, linear)
     if rep is None:
         return 0, _miss(steps, unit, rejection)
     status = rep["status"]

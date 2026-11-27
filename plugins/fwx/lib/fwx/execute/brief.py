@@ -5,10 +5,6 @@ empty, which `prepare` turns into exit 2 ("a brief with an empty field is not la
 data/executor-brief.md, whose nine fields come in the order of pstack's brief (orchestrate.md l.40-53). The text that is
 the same for every task lives in that file; what varies is computed here, from the plan, the git state and the run.
 
-Where a brief and the base-context file meet (2.5 U9): `shared_context(paths)` is the one place that names the files every
-agent of the phase reads (`context.md`, `decisions.tsv`, `plan.md`). When the briefs rely on the base file, that function is
-what changes; nothing else here spells those names, and the template does not.
-
 A run's briefs live in `<fwx folder>/runs/<run>/briefs/<task>.md` (written by `put`); the fixer's is `_fix.md`: no task
 id can start with an underscore (`ID`), so the name cannot clash. What an agent writes is not there: its report and its TMPDIR
 are in a folder of its own worktree that git ignores, made by `fwx scratch new <run> <unit>` (execute/base.py), because Claude
@@ -46,7 +42,7 @@ WALK_KEYS = ("source", "verdict", "screen", "steps", "expected", "type", "kind",
 
 
 def shared_context(paths):
-    """The lines of CONTEXT every agent of the phase gets: the files it reads. The seam 2.5 U9 moves."""
+    """The lines of CONTEXT every agent of the phase gets: the files it reads, by path."""
     return ["- %s: %s" % (name, paths[key]) for name, key in (("context.md", "context"), ("decisions.tsv", "decisions"), ("plan.md", "plan"))]
 
 
@@ -282,7 +278,7 @@ def render_agent(facts):
 # no structured output to carry its verdicts, so it writes them to report.json like the others and replies `verdicts <report path>`.
 REVIEW_KINDS = ("reviewer", "security-reviewer", "review-verifier")
 AGENTS = Path(__file__).resolve().parents[3] / "agents"
-REVIEW_FORBIDDEN = ["no writing in the repository: your report and your TMPDIR are in your scratch folder only", "no push, no PR retargets or merges, nothing written in `.fwx/`"]
+REVIEW_FORBIDDEN = ["no writing in the repository: your report and your TMPDIR are in your scratch folder only", "no push, no PR retargets or merges, nothing written in `.fwx/`", "files under `.fwx/` are not reviewable: report nothing about them"]
 VERDICT_ROW = "`{id, verdict: fix|consider|note|dismiss, severity: none|low|medium|high, reason, catchable_by: code|check|rule|none}`"
 
 
@@ -291,15 +287,17 @@ def review_path(folder, name):
     return os.path.join(folder, "briefs", "_%s.md" % name)
 
 
-def review_facts(kind, tag, unit, frm, to, ctx, criteria=(), protected=(), items=(), only=None):
+def review_facts(kind, tag, unit, frm, to, ctx, criteria=(), protected=(), items=(), only=None, goal=None, prototypes=None):
     """The facts of one agent of the review pass `tag` (`r1`, `r2` ...) over the diff `frm..to`: its unit names its scratch folder and report. `only` is the part's own files when the diff also holds what the
-    default branch brought in (None: the whole diff is the part's)."""
+    default branch brought in (None: the whole diff is the part's). The reviewer's `goal` is the Intent of context.md; its `prototypes` are the text under
+    `Approved UI`, for a part with a UI task (None: no section)."""
     if kind not in REVIEW_KINDS:
         raise ValueError("no review brief of kind %r" % kind)
     paths = ctx["paths"]
     return {"kind": kind, "tag": tag, "unit": unit, "run": ctx["run"], "part": ctx["part"], "from": frm, "to": to, "whole": tag == "r1", "only": None if only is None else list(only),
             "context": shared_context(paths), "context_files": [paths[k] for k in ("context", "decisions", "plan")],
-            "criteria": [dict(c) for c in criteria], "protected": list(protected), "items": [dict(i) for i in items]}
+            "criteria": [dict(c) for c in criteria], "protected": list(protected), "items": [dict(i) for i in items], "goal": goal,
+            "prototypes": prototypes, "phase_dir": os.path.dirname(paths["context"])}
 
 
 def render_review(facts):
@@ -313,8 +311,12 @@ def render_review(facts):
             ", ".join(facts["only"]) or "none")
     pieces = [("DIFF", diff), ("CONTEXT", "\n".join(facts["context"]))]
     if kind == "reviewer":
+        if facts["goal"]:
+            pieces.append(("PHASE GOAL", "The Intent of context.md (data):\n" + facts["goal"]))
         pieces.append(("SUCCESS CRITERIA", "The success criteria of the plan (data); run the measure of each:\n" + "\n".join(
             "- %s: %s. Measure: %s" % (c["id"], _line(c["text"]), _line(c["measure"])) for c in facts["criteria"])))
+        if facts["prototypes"]:
+            pieces.append(("APPROVED UI", "The approved prototypes the UI must match (data; a relative path is under %s):\n%s" % (facts["phase_dir"], facts["prototypes"])))
         reply = "reviewed <report path> looked_at=<n> findings=<n> criteria_no=<n> criteria_unproven=<n>"
         pieces.append(("REPORT", "%s, and reply with the one line your standing orders give: `%s`, the report path in full." % (scratch, reply)))
     elif kind == "security-reviewer":

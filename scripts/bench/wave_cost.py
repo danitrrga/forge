@@ -57,6 +57,7 @@ AGENT = {
 # An Orca worker's first request, measured on today's boundary probes: 52,966 tokens cold (session b68ef865-0ccc-4b18-a2d0-d1e4277896d0)
 # and, with the 23,128-token system-and-tools prefix warm, 29,855 written over it (session 5778240a). worker_start above is estimated:
 # the probe's 53.0k plus the agent file, base context and task text a subagent also carries (about 22k and 16k characters).
+# Those estimates predate the removal of the base context (no agent is handed one now), so 60600 and 58500 are an upper bound.
 PREFIX_WARM = 23128
 # What a worker writes at 5 minutes with the switch, measured on the haiku worker ctx_6f862dc229a0 (5m 54957, 54957, 630, 328; 1h 0).
 SWITCH = "FORCE_PROMPT_CACHING_5M"

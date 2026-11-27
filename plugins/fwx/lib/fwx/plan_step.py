@@ -8,8 +8,7 @@ audit file (`critique_round`), not from lib/fwx/core/rounds.py, which counts imp
 
 `dir` is a phase folder in any checkout; every path in a brief and in a status is that folder's place in the main checkout
 (`state.plan_root`), so a launch from a worktree names the files the agents write to. The paths a brief lists for every agent
-of the phase (`_common`) are kept apart from the ones of the step (`_step_files`): the base-context file later takes over the
-first group.
+of the phase (`_common`) are kept apart from the ones of the step (`_step_files`).
 
 Missing what a step needs raises Missing (the command's exit 1); what cannot be read at all (not a folder, no usable
 configuration) raises CannotRun (exit 2). Imports the standard library, config, state and plan.
@@ -157,7 +156,8 @@ def _exists(p):
 def _common(d, paths):
     """What every agent of the phase is pointed at, as absolute paths that exist."""
     root = state.plan_root(d)
-    found = [("PROJECT.md", root / "PROJECT.md"), ("durable/", root / "durable"), ("context.md", paths["context"]),
+    project = state.project_file(root)
+    found = [(project.name, project), ("durable/", root / "durable"), ("context.md", paths["context"]),
              ("decisions.tsv", paths["decisions"]), ("research/", paths["research"]), ("demo/", paths["demo"]),
              (".claude/fwx.json", os.path.join(config.main_checkout(d), config.FILE))]
     return ["- %s: %s" % (name, p) for name, p in found if _exists(p)]

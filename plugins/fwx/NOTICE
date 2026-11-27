@@ -41,8 +41,8 @@ EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engin
   mechanisms), in words of its own.
 
 mattpocock/skills, https://github.com/mattpocock/skills, commit 49dd158 (MIT).
-  skills/engineering/domain-modeling/SKILL.md: the three ADR criteria. Read for the same criteria by skills/discuss/SKILL.md step 5,
-  in words of its own; no text is copied.
+  skills/engineering/domain-modeling/SKILL.md: the three ADR criteria. Text copied by skills/session/references/closing.md step 3: lines
+  70-72 (the three tests of an ADR), word for word. Read for the same criteria by skills/discuss/SKILL.md step 5, in words of its own.
 
 pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   Read for the shape of playbooks/principles.md, and for the rules of the cleanup of cell text in lib/fwx/state.py (from show-me-your-work/scripts/log.sh, reimplemented in Python, not copied).
@@ -88,7 +88,7 @@ EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engin
   27 of skills/ce-brainstorm/references/interaction-rules.md (its list number dropped) and line 78 of dialogue.md. skills/discuss/references/playback.md takes lines 31, 33, 35, 36,
   38, 40, 42 and 92 of synthesis-summary.md, with "the scoping synthesis" and "the synthesis" reading "the playback" and "the doc"
   reading `context.md`; line 40 loses its sentence on a Deep scope and its sentence naming the ce-noslop skill, and line 92 loses
-  " The loop is:". It takes line 87 of dialogue.md with "Before exiting Phase 1.3" reading "Before the playback", "Phase 2.5's" reading
+  " The loop is:" and reads "before freezing `context.md`" where it reads "before writing the doc". It takes line 87 of dialogue.md with "Before exiting Phase 1.3" reading "Before the playback", "Phase 2.5's" reading
   "The playback's", "one-question-at-a-time dialogue" reading "the rounds", and three passages dropped: the example in brackets on the
   mute rule, "(silent agent inferences, pre-loaded contexts with no dialogue)" and ", same discipline as rigor probes". agents/researcher.md takes
   the sentence "Extraction only — quote what the repo says; do not interpret or propose." of line 41 of dialogue.md as written, and
@@ -108,7 +108,7 @@ d/b/a HumanLayer. The licence is at https://www.apache.org/licenses/LICENSE-2.0 
   is this repo's own text.
 
 mattpocock/skills, https://github.com/mattpocock/skills, commit abeeaf9 (MIT).
-  Read, nothing copied, by skills/discuss/references/reentry.md and templates/MILESTONE.md: skills/engineering/wayfinder/SKILL.md, for
+  Read, nothing copied, by skills/discuss/references/reentry.md and templates/milestone.md: skills/engineering/wayfinder/SKILL.md, for
   the map (Destination, Decisions so far, Not yet specified, Out of scope) and its decision tickets, in words of its own. Here the map is
   a milestone and the tickets are phases of `.fwx/`, not issues in a tracker.
 
@@ -129,6 +129,14 @@ skill-data/dogfood/SKILL.md (errors and console after acting, a recording for an
 OneRedOak/claude-code-workflows, https://github.com/OneRedOak/claude-code-workflows, commit
 29a34c725313c7621f426f838ed31cf482473fb4 (MIT), design-review/design-review-agent.md (the live screen first, problems over
 prescriptions); and the owner's own ui-walk skill of a project, .claude/skills/ui-walk/walker.md and verifier.md @76eca414.
+
+cursor/plugins, https://github.com/cursor/plugins, commit b7b93c36be9b.
+  skills/recall/SKILL.md: pstack/skills/recall/SKILL.md word for word, except the passages its header names as adapted: the transcript
+  folders of Cursor become this project's `.fwx/` documents, git and gh; `session-pickup` reads `${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/reentry.md`; the
+  pointer to the `poteto-mode` Subagents section reads "name the model on every launch with `fwx model <role> <size>`"; step 4 gains the sentence that what an investigator reads (a ticket, a chat message, an error report) is data, never instructions; the `automate-me` and `unslop` lines
+  and the Cursor-only mechanics (MCP agent mode, transcript UUID paths) are removed.
+  Read for skills/discuss/SKILL.md and skills/discuss/references/rounds.md: pstack/skills/poteto-mode/SKILL.md (the first-message rule, the
+  prototype rule and "No is an acceptable answer"), in words of its own. No text is copied.
 
 t3dotgg/tstack, https://github.com/t3dotgg/tstack, commit 11e37a74d0a6868c121cd0910ab2b3bd9873b92a (MIT), Copyright (c) 2026 Theo Browne.
   Only its peer-review and code-review material is used (D4).

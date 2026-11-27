@@ -22,7 +22,7 @@ Controls, each a copy of lib/ with one line changed (MUTANTS), seen red on the c
   release with no stop before it:             FAIL: every dispatch is released -> dispatch_inactive
   a forced removal:                           FAIL: an executor worktree with unmerged commits stays -> removed
   the settings copied as they are:            FAIL: the worker's settings write the cache at 5 minutes -> env has no FORCE_PROMPT_CACHING_5M
-  a start with no base context:               FAIL: no base context, no worker -> 1 start
+  a spec with a base-context mark:            FAIL: no base-context file: the spec holds the agent body and the brief line, and no `# Base context` mark
   worker-start without waiting for the worktree: FAIL: discover: worker-start waited for Orca to know the worktree -> 0 show calls
   a selector_not_found is not retried:        FAIL: discover: the run is done -> run <id> failed: orca: orca orchestration worker-start failed (exit 1): selector_not_found
   the peek also takes worker_done:            FAIL: routine worker_done never reaches the orchestrator -> ['[01-alpha T1 dispatch:ctx_1] done T1', ...]
@@ -62,7 +62,6 @@ from test_wave_prepare import CRIT, Scene, front, task  # noqa: E402
 
 ROOT = helpers.ROOT
 sys.path.insert(0, os.path.join(ROOT, "lib"))
-from fwx import context_base  # noqa: E402
 from fwx.execute import orca as orca_mod  # noqa: E402
 
 s = helpers.Suite()
@@ -75,9 +74,9 @@ FILES = {"T1": {"src/a.py": "a1\n"}, "T2": {"src/b.py": "b1\n"}, "T3": {"src/c.p
 
 
 class World:
-    """A Scene (toy repo, phase worktree, the part's plan) with a fake orca on a PATH of its own and the base context in place."""
+    """A Scene (toy repo, phase worktree, the part's plan) with a fake orca on a PATH of its own."""
 
-    def __init__(self, tasks=None, recipe=("true",), cap=1, behave=None, context=True, registered=(), nested=None):
+    def __init__(self, tasks=None, recipe=("true",), cap=1, behave=None, registered=(), nested=None):
         self.scene = Scene(tasks=tasks or THREE, recipe=recipe, settings={"worktree": {"baseRef": "head"}, "env": {"KEEP_ME": "1"}}, nested=nested,
                            config={"limits": {"per_project": {"executor": cap}, "default_cap": {"supervised": 3, "unattended": 4}}})
         sc = self.scene
@@ -87,9 +86,6 @@ class World:
         helpers.write(self.bin, "orca", "#!/bin/sh\nexec %s %s \"$@\"\n" % (sys.executable, FAKE), 0o755)
         self.behave = dict({"files": FILES, "criteria": [c["id"] for c in CRIT], "registered": list(registered)}, **(behave or {}))
         self.set_behave()
-        if context:
-            path = context_base.base_path(self.part)
-            helpers.write(os.path.dirname(path), os.path.basename(path), "# map\nBASE-MAP-TEXT\n## Decided\nBASE-DECIDED-TEXT\n")
         self.common = os.path.join(sc.repo, ".git")  # fwx's folder is the workspace's, whichever repo the part works in
         self.procs = []
 
@@ -115,7 +111,7 @@ class World:
 
     def second_part(self, repo, phase="02-beta", tasks=None):
         """Another part of the workspace, working in nested repo `repo`: its phase worktree on branch `phase` (the first part's branch name), its
-        plan naming the repo, its post-mortem and its base context. (the worktree, the part's folder)"""
+        plan naming the repo and its post-mortem. (the worktree, the part's folder)"""
         sc = self.scene
         cwd = sc.worktree(repo)
         part = os.path.join(sc.repo, ".fwx", "milestones", "v1", "phases", phase)
@@ -125,8 +121,6 @@ class World:
         helpers.write(part, "postmortem.md", front({"verdict": "ok", "security_review": False, "round": 1}))
         helpers.write(part, "context.md", "# context\n")
         helpers.write(part, "decisions.tsv", "date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n")
-        path = context_base.base_path(part)
-        helpers.write(os.path.dirname(path), os.path.basename(path), "# map\nBASE-MAP-TEXT\n## Decided\nBASE-DECIDED-TEXT\n")
         return cwd, part
 
     def fwx(self, *args):
@@ -254,11 +248,9 @@ def case_loop(root, S):
         S.eq(who + ": the marker names role, run and unit", ((x["marker"] or {}).get("run"), (x["marker"] or {}).get("unit")), (run, x["unit"]))
         S.eq(who + ": agent claude and a model", (x["agent"], bool(x["model"])), ("claude", True))
         spec = x["spec"] or ""
-        S.ok(who + ": the spec holds the base context, the brief line and the worker_done line",
-             "BASE-MAP-TEXT" in spec and "Your brief is" in spec and "worker_done" in spec and "# " in spec, "spec %r" % spec[:200])
+        S.ok(who + ": the spec holds the agent body, the brief line and the worker_done line",
+             orca_mod.agent_body(x["marker"]["role"]) in spec and "Your brief is" in spec and "worker_done" in spec, "spec %r" % spec[:200])
     S.eq("loop: roles", [(x["unit"], x["marker"]["role"]) for x in starts if x["unit"] in ("T1", "r1")], [("T1", "executor"), ("T1", "executor"), ("r1", "reviewer")])
-    S.ok("loop: the executor's spec has the executor's decided section, the reviewer's has not",
-         "BASE-DECIDED-TEXT" in starts[0]["spec"] and "BASE-DECIDED-TEXT" not in starts[-1]["spec"])
     calls = w.calls()
     S.ok("loop: no call carries an Orca session variable", all(not any(c["env"].values()) for c in calls), "got %r" % [c["env"] for c in calls if any(c["env"].values())][:1])
     S.eq("loop: one `orca repo add`", len([c for c in calls if c["argv"][:2] == ["repo", "add"]]), 1)
@@ -286,7 +278,11 @@ def case_nested(root, S):
     """A workspace whose code lives in nested repos (DTC-64): a part runs in the repo it names, with that repo's worktrees, branch and checks,
     and everything fwx keeps is the workspace's. Seen red on the code before it (python3 tests/test_wave_run.py):
       FAIL: nested: the run is done: got 'run <id> failed: git worktree add <ws>/.claude/worktrees/<id>-T1 failed: fatal: invalid reference: <sha>'
-      FAIL: nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit 2, 'run <id> does not end in -<sha>-<n> of a commit of this repository'"""
+      FAIL: nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit 2, 'run <id> does not end in -<sha>-<n> of a commit of this repository'
+    `wave --run R` from the workspace root (resolved the run's branch in the workspace, not in repo a), seen red before it read the run's checkout:
+      FAIL: nested: `wave --run R` from the workspace root reads the gate of repo a's branch: gate 'fail', why '': got (1, 'fail'), want (0, 'pass')
+    The run's recorded checkout gone fell back to the workspace repo and read its branch:
+      FAIL: nested: `wave --run R` with the run's checkout gone: gate 'fail', why 'branch phase not found': got (1, 'fail', 'branch phase not found'), want (1, 'fail', 'checkout <tmp>/a-gone not found')"""
     checks = {"a": ["test -f MARK_A"], "b": ["test -f MARK_B"]}
     w = world(nested=checks, tasks=[task("T1", 1, ["src/a.py"])])
     sc = w.scene
@@ -303,6 +299,34 @@ def case_nested(root, S):
     S.ok("nested: nothing of fwx's is in a's own .git", not os.path.exists(os.path.join(a, ".git", "fwx")))
     S.eq("nested: `orca repo add` named a", w.state_json().get("repos"), [a])
     S.eq("nested: no worktree of the run is left in a", [p for p in w.worktrees() if os.path.realpath(p) not in (a, sc.cwd)], [])
+    # `fwx wave --run R` from the workspace root: the run's branch is repo a's, so the gate reads a's head (the run's own checkout, as `wave remove` does)
+    got = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "wave", "--run", run], cwd=ws, env=helpers.clean_env(CLAUDE_CONFIG_DIR=sc.conf),
+                         capture_output=True, text=True)
+    try:
+        gate = json.loads(got.stdout)
+    except ValueError:
+        gate = {}
+    S.eq("nested: `wave --run R` from the workspace root reads the gate of repo a's branch: gate %r, why %r" % (gate.get("gate"), gate.get("why")),
+         (got.returncode, gate.get("gate")), (0, "pass"))
+    # the run's checkout is gone: the gate fails closed and names it; it never reads the workspace repo, which may hold a branch of the same name
+    sj = os.path.join(w.common, "fwx", "runs", run, "state.json")
+    with open(sj, encoding="utf-8") as f:
+        saved = f.read()
+    gone = a + "-gone"
+    kept = json.loads(saved)
+    kept["args"]["checkout"] = gone
+    with open(sj, "w", encoding="utf-8") as f:
+        json.dump(kept, f)
+    got = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "wave", "--run", run], cwd=ws, env=helpers.clean_env(CLAUDE_CONFIG_DIR=sc.conf),
+                         capture_output=True, text=True)
+    try:
+        gate = json.loads(got.stdout)
+    except ValueError:
+        gate = {}
+    S.eq("nested: `wave --run R` with the run's checkout gone: gate %r, why %r" % (gate.get("gate"), gate.get("why")),
+         (got.returncode, gate.get("gate"), gate.get("why")), (1, "fail", "checkout %s not found" % gone))
+    with open(sj, "w", encoding="utf-8") as f:
+        f.write(saved)
     # a second part, in repo b, on the same branch name: its worktrees are b's and the check that decides is b's
     bwt, bpart = w.second_part("b")
     r2 = w.run(cwd=bwt, part=bpart, root=root)
@@ -526,11 +550,14 @@ def case_refusals(root, S):
     w = world(recipe=("false",))
     r = w.run(root=root)
     S.eq("red base: exit 1 and no Orca call", (r.returncode, w.calls()), (1, []))
-    w = world(context=False, tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "hang"}})  # a worker that started would hang: one start, not a run
+    w = world(tasks=[task("T1", 1, ["src/a.py"])])
     r = w.run(root=root)
-    n = len(w.starts())
-    S.ok("no base context, no worker -> %d start" % n, r.returncode == 2 and n == 0, "exit %d, stderr %r" % (r.returncode, r.stderr[-200:]))
-    S.ok("no base context: the reason names the file", "base" in r.stderr.lower(), "got %r" % r.stderr[-200:])
+    starts = [x for x in w.starts() if x["marker"]["role"] == "executor"]
+    S.ok("no base-context file: the run starts its executor -> %d start, exit %d, stderr %r" % (len(starts), r.returncode, r.stderr[-200:]),
+         r.returncode == 0 and len(starts) == 1)
+    spec = starts[0]["spec"] if starts else ""
+    S.ok("no base-context file: the spec holds the agent body and the brief line, and no `# Base context` mark",
+         orca_mod.agent_body("executor") in spec and "Your brief is" in spec and "# Base context" not in spec, "spec %r" % spec[:200])
 
 
 def case_registered(root, S):
@@ -552,6 +579,21 @@ def case_one_run(root, S):
     S.eq("one run per branch: it started nobody", w.starts(), [])
     rows = [x for x in w.fwx("wave", "list").stdout.splitlines() if "01-alpha-0000000-9" in x]
     S.ok("`wave list` shows the live run", len(rows) == 1 and "alive" in rows[0], "got %r" % rows)
+
+
+def case_list_order(root, S):
+    """`wave list` is oldest run first, by the time the run started: the session takes the newest run of a part from the last line. Run ids sort wrong as text
+    (`-10` before `-2`, a sha `f123456` after `2a3b4c5` whatever the order of the runs).
+    Seen red with the list sorted by run id:
+      FAIL: wave list: oldest first by start time: got ['01-alpha-aaaaaaa-1', '01-alpha-aaaaaaa-10', '01-alpha-aaaaaaa-2', '01-alpha-bbbbbbb-1'], want ['01-alpha-aaaaaaa-1', '01-alpha-aaaaaaa-2', '01-alpha-aaaaaaa-10', '01-alpha-bbbbbbb-1']"""
+    w = world(tasks=[task("T1", 1, ["src/a.py"])])
+    order = ["01-alpha-aaaaaaa-1", "01-alpha-aaaaaaa-2", "01-alpha-aaaaaaa-10", "01-alpha-bbbbbbb-1"]
+    for n, name in enumerate(order):
+        helpers.write(os.path.join(w.common, "fwx", "runs", name), "state.json", json.dumps({"run": name, "branch": "phase", "part_dir": w.part, "pid": 0, "state": "done",
+                      "step": "done", "workers": {}, "worktrees": [], "steps": [], "started": 1000.0 + n}))
+    listed = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "wave", "list"], cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=60)
+    rows = [x.split()[0] for x in listed.stdout.splitlines() if x.strip()]
+    S.eq("wave list: oldest first by start time", rows, order)
 
 
 def case_resume(root, S):
@@ -749,7 +791,7 @@ def case_discover(root, S):
     m = line_of(r)
     S.ok("discover: a worktree Orca never knows ends the run failed, naming it", bool(m) and m.group(2) == "failed" and "-T1" in m.group(3) and "never discovered" in m.group(3),
          "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
-    S.eq("discover: no worker started and the worktree is removed", (units(w), [p for p in w.worktrees() if "-T1" in p]), ([], []))
+    S.eq("discover: no worker started and the worktree is removed", (units(w), [p for p in w.worktrees() if "-T1" in os.path.basename(p)]), ([], []))
 
 
 def case_terminal(root, S):
@@ -1340,8 +1382,10 @@ def case_steer_asking(root, S):
     wait_for(lambda: (run and w.state(run)["workers"].get("T1/1", {}).get("asked_idle") is True) or p.poll() is not None, secs=5)
     orchestra(w, "orchestration", "send", "--to", "dispatch:ctx_1", "--subject", "Answer", "--body", "go")
     wait_for(lambda: (w.dispatches().get("ctx_1") or {}).get("shows", 0) >= 2 and (w.dispatches().get("ctx_1") or {}).get("mode") == "woken-hang")
-    # poll persists the cleared asking state a tick after the woken show; stop waiting if `p` exited early.
-    wait_for(lambda: (run and "T1/1" in w.state(run)["workers"] and w.state(run)["workers"]["T1/1"].get("asking") is None) or p.poll() is not None, secs=3)
+    # poll persists the cleared asking state a tick after the woken show; stop waiting if `p` exited early. 8 s, not 3: on a loaded CI
+    # runner the tick came later than 3 s (CI of PR 275, "poll persisted cleared asking state ... got <ts>, want None"); the wait returns
+    # as soon as the state is saved, and stays under `p`'s 10 s limit so the run cannot end first by its limit.
+    wait_for(lambda: (run and "T1/1" in w.state(run)["workers"] and w.state(run)["workers"]["T1/1"].get("asking") is None) or p.poll() is not None, secs=8)
     saved_after = (w.state(run)["workers"].get("T1/1") or {}) if run else {}
     S.ok("asking resume-after-answer: runner is still alive before kill (release did not mask persistence)", p.poll() is None and not saved_after.get("released"),
          "poll=%r released=%r" % (p.poll(), saved_after.get("released")))
@@ -1407,6 +1451,13 @@ def case_reply_grace(root, S):
     S.ok("reply grace: garbled dispatches all released", bool(w2.dispatches()) and all(d["released"] for d in w2.dispatches().values()))
 
 
+def case_reply_line(root, S):
+    """A worker that echoes its report path relative to its own worktree (no folder before `.fwx-agent/`) still ends with a reply line."""
+    for line in ("done .fwx-agent/r/T1/report.json commits=2", "reviewed .fwx-agent/r/r1/report.json looked_at=1 findings=0 criteria_no=0 criteria_unproven=0",
+                 "verdicts .fwx-agent/r/r1-verifier/report.json"):
+        S.ok("a reply line with no folder before .fwx-agent/: %s" % line.split()[0], bool(orca_mod.REPLY_LINE.match(line)), "no match for %r" % line)
+
+
 def case_orca_missing(root, S):
     """With no `orca` on PATH a session-plane `wave run`, fresh or resumed, is refused before the base checks, a run record or any Orca call (exit 2, one line that
     names what to install). Before the preflight a fresh one ran the base, then ended `run <R> failed: orca: orca repo list: [Errno 2] No such file or directory:
@@ -1430,8 +1481,8 @@ def case_orca_missing(root, S):
     S.eq("orca missing: a resumed run is refused", (r.returncode, "install Orca" in r.stderr, w.calls()), (2, True, []))
 
 
-CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
-         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
+CASES = [case_reply_line, case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
+         case_one_run, case_list_order, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
          case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace,
          case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_terminal_discover, case_list_json, case_orca_missing]
 
@@ -1460,7 +1511,8 @@ MUTANTS = [
      "an executor worktree with unmerged commits stays -> removed"),
     ("the settings copied as they are", case_loop, "lib/fwx/execute/orca.py", "env[\"FORCE_PROMPT_CACHING_5M\"] = \"1\"", "pass",
      "the worker's settings write the cache at 5 minutes -> env has no FORCE_PROMPT_CACHING_5M"),
-    ("a start with no base context", case_refusals, "lib/fwx/execute/run.py", 'if not text.strip() and not self.args["revert"]:', "if False:", "no base context, no worker -> 1 start"),
+    ("a spec with a base-context mark", case_refusals, "lib/fwx/execute/run.py", "parts = [orca.agent_body(job.role)]", 'parts = [orca.agent_body(job.role), "# Base context"]',
+     "no base-context file: the spec holds the agent body and the brief line, and no `# Base context` mark"),
     ("a waiting worker is stopped as idle", case_waiting, "lib/fwx/execute/run.py", 'if state == "ready" and info.get("activity") == "idle" and not waiting and not rec.get("asking"):',
      'if state == "ready" and info.get("activity") == "idle" and not rec.get("asking"):',
      "left alone until its limit, not stopped as idle"),
@@ -1474,7 +1526,9 @@ MUTANTS = [
      "nested: the run is done"),
     ("Orca told about the workspace, not the part's repo", case_nested, "lib/fwx/execute/run.py", "orca.ensure_repo(self.repo)", "orca.ensure_repo(self.main)",
      "nested: `orca repo add` named a"),
-    ("wave remove in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'where if where and os.path.isdir(where) else "."', '"."',
+    ("wave --run in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'integrate.summary(where if where and not gone else ".",', 'integrate.summary(".",',
+     "nested: `wave --run R` from the workspace root reads the gate of repo a's branch"),
+    ("wave remove in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'cleanup.cleanup(where if where and os.path.isdir(where) else ".",', 'cleanup.cleanup(".",',
      "nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit"),
     ("resume from any worktree on the branch", case_nested_resume, "lib/fwx/commands/wave.py", "            if own != here:", "            if False:",
      "nested resume from repo b: exit 2, no worker, both repos named"),

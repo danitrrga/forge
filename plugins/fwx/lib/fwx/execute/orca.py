@@ -37,9 +37,9 @@ SETTLED = ("succeeded", "failed", "stopped")
 SETTINGS = os.path.join(".claude", "settings.local.json")
 MARKER = "fwx-worker.json"
 REPLY_LINE = re.compile(
-    r"(?:(?:done|wrong-base|question|failed) \S+/\.fwx-agent/\S+/report\.json commits=\d+"
-    r"|reviewed \S+/\.fwx-agent/\S+/report\.json looked_at=\d+ findings=\d+ criteria_no=\d+ criteria_unproven=\d+"
-    r"|verdicts \S+/\.fwx-agent/\S+/report\.json)\Z"
+    r"(?:(?:done|wrong-base|question|failed) (?:\S+/)?\.fwx-agent/\S+/report\.json commits=\d+"
+    r"|reviewed (?:\S+/)?\.fwx-agent/\S+/report\.json looked_at=\d+ findings=\d+ criteria_no=\d+ criteria_unproven=\d+"
+    r"|verdicts (?:\S+/)?\.fwx-agent/\S+/report\.json)\Z"
 )
 
 

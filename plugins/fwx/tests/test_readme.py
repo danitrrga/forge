@@ -276,6 +276,51 @@ s.ok("## Configuration names no command that does not read a key back" + (" -> "
 s.ok("control a section that sends the agent to `fwx session --json`: fails", config_false_readback(real.replace("### What is not configurable", "Run `fwx session --json`.\n\n### What is not configurable", 1)) == ["fwx session --json"])
 
 
+def agents_section(readme):
+    m = re.search(r"^## Agents\n(.*?)(?=^## |\Z)", readme, re.S | re.M)
+    return m.group(1) if m else None
+
+
+def agent_rows(readme):
+    """`{role: (launched_by, brief)}` of the table rows of `## Agents`: `| `role` | who launches it | what its brief gives |`."""
+    section = agents_section(readme) or ""
+    return {m.group(1): (m.group(2).strip(), m.group(3).strip())
+            for m in re.finditer(r"^\| `([a-z-]+)` \| ([^|]*) \| ([^|]*) \|\s*$", section, re.M)}
+
+
+def agents_problems(readme, agents=os.path.join(helpers.ROOT, "agents")):
+    """What `## Agents` lacks: the section, a row for each file of agents/ plus the fixer and the resolver (modes of the executor, with
+    no file of their own), a row with no such file, or a row with an empty cell. The table names the roles only: what each brief holds is the brief builders' own."""
+    if agents_section(readme) is None:
+        return ["README.md has no `## Agents` section"]
+    wanted = sorted({f[:-3] for f in os.listdir(agents) if f.endswith(".md")} | {"fixer", "resolver"})
+    rows = agent_rows(readme)
+    out = ["no row for `%s`" % w for w in wanted if w not in rows]
+    out += ["`%s` has a row but no agent file" % r for r in rows if r not in wanted]
+    out += ["`%s` has an empty cell" % r for r, cells in rows.items() if not all(cells)]
+    return out
+
+
+# Seen red before the README had the section (at 56a196a), and again on a copy of this check with each `if` made `if False:`:
+#   FAIL: README.md has `## Agents` naming every agent file, the fixer and the resolver -> README.md has no `## Agents` section
+got = agents_problems(real)
+s.ok("README.md has `## Agents` naming every agent file, the fixer and the resolver" + (" -> " + "; ".join(got) if got else ""), not got)
+s.ok("`## Agents` reads the rows of the table", len(agent_rows(real)) >= 13, "%d rows" % len(agent_rows(real)))
+s.ok("control without the section: fails", agents_problems(real.replace("## Agents\n", "## Others\n", 1)) == ["README.md has no `## Agents` section"])
+for role in ("planner", "fixer", "resolver"):
+    s.ok("control without the row of `%s`: fails" % role,
+         agents_problems(re.sub(r"^\| `%s` \|.*\n" % role, "", real, flags=re.M)) == ["no row for `%s`" % role])
+# Seen red at 1b09126, where the state agent's file was gone and its row stayed: the row was not flagged (the check returned [])
+s.ok("control a row for an agent with no file: fails",
+     agents_problems(real.replace("\n## Orca plugin", "| `ghost` | nobody | nothing |\n\n## Orca plugin", 1)) == ["`ghost` has a row but no agent file"])
+s.ok("control a row with an empty brief cell: fails",
+     agents_problems(re.sub(r"^(\| `reviewer` \|[^|]*\|)[^|]*\|", r"\1  |", real, count=1, flags=re.M)) == ["`reviewer` has an empty cell"])
+toy_agents = os.path.join(toy, "agents")
+shutil.copytree(os.path.join(helpers.ROOT, "agents"), toy_agents)
+open(os.path.join(toy_agents, "zz-new.md"), "w").close()
+s.ok("control a new agent file with no row: fails", agents_problems(real, toy_agents) == ["no row for `zz-new`"])
+
+
 def config_control(name, text, which, needle):
     got = config_problems(toy, text)[which]
     s.ok("control %s: fails naming %r" % (name, needle), needle in got, "missing: %r" % got)

@@ -14,14 +14,11 @@ python3 bin/fwx statusline    # the status-bar line
 python3 bin/fwx phase new <slug>    # the next phase folder, the session bound to it; `phase list` shows them, `phase remove <dir>` deletes one whose discuss was cancelled; `session attach <phase dir>` binds the session to one
 python3 bin/fwx subphase new <phase dir> <slug>    # the next subphase folder of a phase
 python3 bin/fwx milestone new [vN]    # the next milestone of a scope
-python3 bin/fwx decision new --decision T --why T --support S    # a row in the phase's decisions.tsv (`--adr`: the scope's adr.tsv); `decision list` reads them, `--grep TEXT` and `--all`
-python3 bin/fwx state lint <state.md>    # a state.md against its rules; exit 1 on an error
-python3 bin/fwx report lint <report.md>    # a phase report against its rules, the same way
+python3 bin/fwx decision new --decision T --why T --support S    # a row in the phase's decisions.tsv (`--adr`: the scope's adr.tsv)
 python3 bin/fwx session    # the session's phase; `fwx --help` lists every command, grouped by object
 python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it
 python3 bin/fwx rounds <dir>    # rounds a job has used of its cap; --use "<why>" spends one, --reset "<why>" restarts the count
 python3 bin/fwx plan lint <dir>    # the structure of a phase's plan.md (and each subphase's), premortem.md and postmortem.md; exit 1 on an error; --json
-python3 bin/fwx context new <dir>    # the base-context file every agent of a phase starts with; `context seal` marks a hand-written one, `context lint` fails on one over the cap, edited or stale
 python3 bin/fwx discuss --json    # what the discuss opens with: the configuration, the phases, the models and what waits in Linear; read-only
 python3 bin/fwx linear list --label factory --json    # the project's Linear issues; needs LINEAR_API_KEY
 python3 bin/fwx project state --json    # open PRs, the default branch's CI and open Linear issues; a section without `gh` login or LINEAR_API_KEY is `{"not_run": ...}`, exit 77
@@ -50,6 +47,29 @@ and a run where nothing passed or a declared path is no test file is 1. `--jobs 
 process may use, at most 8; `--jobs 1` is one file after another); the lines and the exit code are the same at any N, and a failing
 file's output is shown whole. `python3 bin/forge test` with no group runs forge's own tests and leaves this suite out. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
 docstring line is its help, and there is no list to edit.
+
+The owner opens a piece of work himself with `/fwx:recall`, pstack's recall skill (`skills/recall/SKILL.md`, owner-only: `disable-model-invocation: true`): it rebuilds where the work stands from `.fwx/`, git and `gh` and hands back a short brief. It never starts or binds a session. Its source and the passages adapted are named in its header and in `NOTICE`.
+
+## Agents
+
+Each agent gets, by path in its brief, only what its job needs; nothing is injected into every agent. A critic or a reviewer gets files, never the author's reasoning. The agent files are `agents/<role>.md`; the fixer and the conflict resolver are modes of the executor, chosen by the brief.
+
+| Role | Launched by | What its brief gives |
+| --- | --- | --- |
+| `planner` | the `plan` skill | the phase folder: `context.md`, `decisions.tsv` and any critique, via `fwx plan brief` |
+| `pre-mortem` | the `pre-mortem` skill | `context.md` and `decisions.tsv` of the phase |
+| `post-mortem` | the `post-mortem` skill | the plan, `context.md` and `decisions.tsv`; on a returned job also `git diff` of the branch |
+| `executor` | `fwx wave run` | one task of the plan: its files, tests and limits, with `context.md`, `plan.md` and `decisions.tsv` |
+| `fixer` | `fwx wave run` | the findings to fix (one commit each) or the red check or gate to fix, with the plan's files as its scope |
+| `resolver` | `fwx wave run` | the branch to merge in, the quick checks to run and the task trailers, with the same files as the executor |
+| `reviewer` | `fwx wave run` | the diff `<base>..<head>`, `context.md`, `decisions.tsv`, `plan.md`, the phase goal and success criteria with the measure of each and, for UI, the approved prototypes; never the author's reasoning |
+| `security-reviewer` | `fwx wave run` | the same diff and files as the reviewer and the protected paths the diff touches |
+| `review-verifier` | `fwx wave run` | the reviewer's findings and the diff; not the reasoning of whoever wrote them |
+| `researcher` | the orchestrator, in a discuss | one angle to read, `context.md` and `decisions.tsv`, and the file to write under the phase's `research/` |
+| `demo` | the orchestrator, in a discuss | one UI decision, `context.md` and `decisions.tsv`, the folder to write and the verdict tool and command from `fwx discuss` |
+| `ui-walker` | the `ui-walk` skill | one tramo of screens, its axis (`breaker` or `critic`), the session and the command to drive the browser; for the critic, each screen's approved reference; no code |
+| `ui-verifier` | the `ui-walk` skill | the mode (`tramos` or `verify`), the plan, the walkers' findings or the base commit, and the phase's `demo/` folder |
+| `skill-proposer` | the `session` skill | `context.md`, `decisions.tsv`, `plan.md`, the phase branch and the base commit |
 
 ## Orca plugin
 
@@ -89,7 +109,7 @@ name with no entry is used as it is.
 
 `limits` is the most agents at once, a fixed number that nothing measures: `default_cap` is `{"supervised": 3, "unattended": 4}` (the
 owner present, nobody present) and `per_project` maps a role to its own number (`executor`, `ui-walker`). `fwx wave run` (and `wave new`) read the
-executor's as `cap` of the part's `args`, `fwx walk start` the walkers' as `capacity.cap`, and the built base context states them to every agent that gets a base (the `map` and `map+decided` kinds of `data/context-base.tsv`; the `none` kinds get none), but not one written by hand and sealed with `fwx context seal`, which is not built. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
+executor's as `cap` of the part's `args`, `fwx walk start` the walkers' as `capacity.cap`. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
 are not counted, and the older keys `on`, `ram_min_free_gb` and `ram_per_agent_mb` are ignored.
 
 `project.check_timeout_s` (default `1200`) is the seconds one check of `project.checks` or `checks_quick` may run before fwx stops it: `fwx verify`, the

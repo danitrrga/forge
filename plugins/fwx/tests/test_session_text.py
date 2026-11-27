@@ -13,7 +13,6 @@ removed the checks that pinned wording (the steps' sentences, the sub-steps of s
 skills' "another model", the shared marker `Noticed:`) together with their red logs.
 
 Seen red on copies of the real texts (a copy of plugins/fwx with the pinned words changed; the first FAIL line printed):
-  references/part-report.md, "fwx report lint" -> "fwx report check":  FAIL: part-report.md saves the returned report with Write, then checks it -> no 'report-<n>.md' ... 'Write' ... 'fwx report lint' in that order after the `state` launch
   references/ui-review.md, "details.unverified" -> "details.unverfied":  FAIL: references/ui-review.md cites only fields the workflow returns -> not returned: ['unverfied']
   references/ui-review.md, "`support` `approved`" -> "`support` `approvd`":  FAIL: ui-review.md names the support of `not_defect` and `redo`, each a value `fwx decision new` accepts -> ui-review.md {'not_defect': 'approvd', 'redo': 'chosen'}, SUPPORT ('chosen', 'approved', 'unexamined', 'agent-assumption')
   references/ui-review.md, "revert it?" -> "proceed?":  FAIL: ui-review.md asks before the revert -> no 'revert it?' before the first '--revert'
@@ -33,6 +32,8 @@ Seen red on copies of the real texts (a copy of plugins/fwx with the pinned word
   references/closing.md, the `fwx wave list` sweep -> "remove each run":  FAIL: closing.md sweeps the runs `fwx wave list` shows with `fwx wave remove --run` -> no 'fwx wave list' ... 'fwx wave remove --run' in order
   agents/review-verifier.md, "`verdicts <report path>`" -> "`verdicts <path>`":  FAIL: the verifier replies with the line `wave findings --verdicts` reads -> no `verdicts <report path>` in agents/review-verifier.md, or review.VERDICT_LINE does not read it
   agents/reviewer.md, "names a brief file" -> "is your brief, there is no brief file":  FAIL: no agent says it has no brief file -> still says it in ['reviewer']
+01.3 T32 (the orchestrator writes the report from the template; the same copy-and-change, the first FAIL line printed):
+  references/closing.md, `--why "PR <url>"` -> `--why "done"`:  FAIL: closing.md writes the pull request body from the same template and the closing stage row with the PR link -> missing ['--why "PR <url>"']
 Each kept check also has a control on a toy text (the "control:" checks).
 """
 import os
@@ -138,7 +139,7 @@ def _commit_effect(line, toy, stale, demo, twice):
         run("git add -A && git commit -q -m older-session")
         with open(os.path.join(toy, old_state), "w") as f:
             f.write("changed\n")
-    for rel in (".fwx/PROJECT.md", ".fwx/milestones/v1/MILESTONE.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html",
+    for rel in (".fwx/project.md", ".fwx/milestones/v1/milestone.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html",
                 phase + "/demo/shot.png", phase + "/ui-walk/1-1/demo-state.json", phase + "/ui-walk/1-1/up.log", phase + "/ui-walk/1-1/shot.png"):
         if not demo and "/demo/page.html" in rel:
             continue
@@ -234,9 +235,143 @@ def main():
     check("every references/ file SKILL.md cites exists", not (cited - present), "missing %s" % sorted(cited - present))
     check("every file in references/ is cited by SKILL.md", not (present - cited), "uncited %s" % sorted(present - cited))
 
-    # The `state` agent returns the report and the session saves it with `Write` (the harness refuses a subagent's Write of a report), then checks it.
-    check("part-report.md saves the returned report with Write, then checks it", in_order(rep_ref, "`state`", "report-<n>.md", "`Write`", "fwx report lint"),
-          "no 'report-<n>.md' ... 'Write' ... 'fwx report lint' in that order after the `state` launch")
+    # 01.3 T32 (D3): the orchestrator writes the report itself, from `fwx wave --run <R> --json` and the last `evidence` row of audit.tsv, into the
+    # template `templates/phase/report.md`, and pastes it to the owner; nothing is saved, so no text launches the `state` agent or names `state.md` or
+    # `report-<n>.md`. The pull request body is made from the same template at the close, and the closing stage row carries the PR link. Seen red at
+    # 56a196a (the texts and the template before this task):
+    #   FAIL: no session text launches `state` or names `state.md` or `report-<n>.md` -> SKILL.md:18, :19, :33, :60, references/factory-return.md:8, references/part-report.md:6, :9, ...
+    #   FAIL: part-report.md fills templates/phase/report.md from `fwx wave --run <R> --json` and the last evidence row, and pastes it -> missing [...]
+    #   FAIL: closing.md writes the pull request body from the same template and the closing stage row with the PR link -> missing [...]
+    #   FAIL: templates/phase/report.md has the six sections of the orchestrator's report in at most 40 lines -> ...
+    def mirror_files(texts_by_name):
+        return {n: [i for i, ln in enumerate(t.splitlines(), 1) if re.search(r"`state`|state\.md|report-<n>", ln)] for n, t in texts_by_name.items()}
+    old_mirror = {n: ls for n, ls in mirror_files(texts).items() if ls}
+    check("no session text launches `state` or names `state.md` or `report-<n>.md`", not old_mirror,
+          ", ".join("%s:%s" % (n, ", :".join(map(str, ls))) for n, ls in sorted(old_mirror.items())))
+    check("control: a text that launches `state` or names its files is caught",
+          all(mirror_files({"a.md": t})["a.md"] == [1] for t in ("Launch `state` now", "writes state.md", "saves report-<n>.md")) and mirror_files({"a.md": "the stage rows"})["a.md"] == [])
+    template_rel = os.path.join(ROOT, "templates", "phase", "report.md")
+    with open(template_rel, encoding="utf-8") as f:
+        template = f.read()
+    TEMPLATE_HEADINGS = ("## Goal", "## Done", "## Assumptions taken without asking", "## Outside", "## Evidence", "## PR")
+
+    def template_problems(text):
+        heads = [ln for ln in text.splitlines() if ln.startswith("## ")]
+        out = ["heading %r" % h for h in TEMPLATE_HEADINGS if h not in heads]
+        if len(text.splitlines()) > 40:
+            out.append("%d lines" % len(text.splitlines()))
+        return out
+    check("templates/phase/report.md has the six sections of the orchestrator's report in at most 40 lines", not template_problems(template), "problems: %s" % template_problems(template))
+    # CodeRabbit PR 279: the 41-line fixture also lacked five headings, so it passed with the length check removed. Each control now has one fault.
+    # Seen red with the length check removed from template_problems: "FAIL: control: a template with all six sections and 41 lines is caught on length alone"
+    check("control: a template with a missing section is caught on that alone", template_problems("## Goal\n") == ["heading %r" % h for h in TEMPLATE_HEADINGS[1:]])
+    check("control: a template with all six sections and 41 lines is caught on length alone",
+          template_problems("\n".join(TEMPLATE_HEADINGS) + "\n" * 36) == ["41 lines"], "got %s" % template_problems("\n".join(TEMPLATE_HEADINGS) + "\n" * 36))
+
+    def fills_template(text):
+        return [w for w in ("templates/phase/report.md", "fwx wave --run <R> --json", "`outside`", "`consider`", "last `evidence` row", "audit.tsv", "paste") if w not in text]
+    check("part-report.md fills templates/phase/report.md from `fwx wave --run <R> --json` and the last evidence row, and pastes it", not fills_template(rep_ref),
+          "missing %s" % fills_template(rep_ref))
+    check("control: a part-report.md that names no template is caught", bool(fills_template("Run `fwx wave --run <R> --json` and paste the last `evidence` row of audit.tsv.")))
+
+    # r1-F1: the keys the report texts read from `fwx wave --run <R> --json` are the keys `integrate.summary` returns: the review's facts are under
+    # `findings` (`findings.consider`, `findings.outside` for the filed ones), the unfiled `outside` items at the top. `result` and `file` are not keys
+    # of it (`result` belongs to `fwx wave list --json`). Seen red before the fix:
+    #   FAIL: part-report.md and templates/phase/report.md read only keys `wave --run --json` returns -> cites no `findings.<key>`; names ['`result`', '`file`']
+    from fwx.execute import integrate as wave_integrate  # noqa: E402
+    with tempfile.TemporaryDirectory(prefix="fwx-summary-") as toy_repo:
+        subprocess.run("git init -q -b master", shell=True, cwd=toy_repo, check=True)
+        summary_keys = wave_integrate.summary(toy_repo, None, branch="master")[1]
+    top_keys, found_keys = set(summary_keys), set(summary_keys["findings"])
+
+    def wave_json_problems(text):
+        dotted = re.findall(r"`findings\.([a-z_]+)`", text)
+        bare = [w for w in ("`result`", "`file`") if w in text and w[1:-1] not in top_keys]
+        return (["cites no `findings.<key>`"] if not dotted else []) + ["`findings.%s`" % k for k in dotted if k not in found_keys] + (["names %s" % bare] if bare else [])
+    problems = wave_json_problems(rep_ref + "\n" + template)
+    check("part-report.md and templates/phase/report.md read only keys `wave --run --json` returns", not problems and "outside" in top_keys, "; ".join(problems))
+    check("control: a text that reads `result` or `findings.fil` of the run is caught",
+          bool(wave_json_problems("read `result` and `findings.consider`")) and bool(wave_json_problems("read `findings.fil`")) and not wave_json_problems("`findings.consider` and `findings.outside`"))
+
+    # 01.3 fix g3: `wave --run --json` holds no Linear keys, so the texts take the key from step 5's filing of this session, else `none filed`, and
+    # step 5 no longer files "for the part report to read back from the stage rows". Seen red at a913be9:
+    #   FAIL: the report texts take a Linear key from step 5's filing, else `none filed` -> part-report.md still takes Linear keys from the run's json; part-report.md has no `none filed`; template Outside does not name step 5's filing; step 5 says the report reads outside items back from stage rows
+    def linear_key_problems(rep, tmpl, step5):
+        return (["part-report.md still takes Linear keys from the run's json"] if "their Linear keys" in rep else []) + (
+            ["part-report.md has no `none filed`"] if "none filed" not in rep else []) + (
+            ["part-report.md does not name step 5's filing"] if "step 5" not in rep else []) + (
+            ["template Outside does not name step 5's filing"] if "step 5" not in tmpl.split("## Outside")[-1].split("## Evidence")[0] else []) + (
+            ["step 5 says the report reads outside items back from stage rows"] if "reads them back from the stage rows" in step5 else [])
+    check("the report texts take a Linear key from step 5's filing, else `none filed`", not linear_key_problems(rep_ref, template, step(skill, 5)),
+          "; ".join(linear_key_problems(rep_ref, template, step(skill, 5))))
+    check("control: texts that read Linear keys from the run's json are caught",
+          len(linear_key_problems("take their Linear keys from it", "## Outside\n## Evidence", "because the part report reads them back from the stage rows")) == 5)
+
+    # r1-F1 (fix-1): a Linear key filed at step 5 must survive into a later session (a resume, the close's PR body), so step 5 records each as
+    # `filed: <where> - <KEY>` in its stage row's `--why` and the report texts read the key from those rows. Seen red before the fix:
+    #   FAIL: step 5 records filed keys in the stage row and the report reads them there -> step 5 has no `filed: <where> - <KEY>`; part-report.md does not read `filed:` from the stage rows; template Outside does not name the `filed:` entry
+    def filed_key_problems(rep, tmpl, step5):
+        outside_section = tmpl.split("## Outside")[-1].split("## Evidence")[0]
+        return (["step 5 has no `filed: <where> - <KEY>`"] if "`filed: <where> - <KEY>`" not in step5 else []) + (
+            ["part-report.md does not read `filed:` from the stage rows"] if "filed: <where> - <KEY>" not in rep else []) + (
+            ["template Outside does not name the `filed:` entry"] if "`filed:`" not in outside_section else [])
+    check("step 5 records filed keys in the stage row and the report reads them there", not filed_key_problems(rep_ref, template, step(skill, 5)),
+          "; ".join(filed_key_problems(rep_ref, template, step(skill, 5))))
+    check("control: texts with no `filed:` record are caught", len(filed_key_problems("none filed", "## Outside\n## Evidence", "unfiled go in the `--why`")) == 3)
+
+    # 01.3 fix g11, r1-F1 and r1-SO1 (fix-2): a `--why` that carries text of a report, a finding or the app under test (`filed:`, `outside:`, the walkers'
+    # findings) goes through a single-quoted heredoc, said once in rule 3; inside double quotes a `$(...)` or backtick in that text runs. Every
+    # `--why "<` site in skills/session/ must be the plain stage form `--why "<text>"`, steps 5 and 6 point at the rule, and the terminator is one
+    # no report line contains. Seen red at the r1-F1 commit (rule 3 had no heredoc; step 5 and 6 used the terminator `WHY`):
+    #   FAIL: every `--why` that carries report, finding or app text goes through the heredoc of rule 3 -> rule 3 has no `--why "$(cat <<'WHY_END_7f3a'`; rule 3 does not say the text is never pasted inside double quotes; step 5 does not point at rule 3; step 6 has no `--why "$(cat <<'WHY_END_7f3a'`; terminator `WHY` is a line a report may contain: SKILL.md
+    def why_quoting_problems(rules, step5, step6, all_texts):
+        form = "--why \"$(cat <<'WHY_END_7f3a'"
+        return (["rule 3 has no `%s`" % form] if form not in rules else []) + (
+            ["rule 3 does not say the text is never pasted inside double quotes"] if "never pasted inside double quotes" not in rules else []) + (
+            ["step 5 does not point at rule 3"] if "rule 3" not in step5 else []) + (
+            ["step 6 has no `%s`" % form] if form not in step6 else []) + [
+            "terminator `WHY` is a line a report may contain: %s" % rel for rel, t in all_texts.items() if "<<'WHY'" in t] + [
+            "double-quoted `--why \"<%s>\"` in %s" % (w, rel) for rel, t in all_texts.items() for w in re.findall(r'--why "<([^>]*)>', t) if w != "text"]
+    rules_of_skill = skill.split("## Steps")[0]
+    check("every `--why` that carries report, finding or app text goes through the heredoc of rule 3",
+          not why_quoting_problems(rules_of_skill, step(skill, 5), step(skill, 6), texts),
+          "; ".join(why_quoting_problems(rules_of_skill, step(skill, 5), step(skill, 6), texts)))
+    good = {"SKILL.md": "--why \"$(cat <<'WHY_END_7f3a'` never pasted inside double quotes, rule 3, --why \"<text>\""}
+    check("control: texts with no heredoc rule, the old terminator and a double-quoted findings `--why` are caught",
+          len(why_quoting_problems("a --why", "step", "wave fix --why \"<findings>\"", {"SKILL.md": "<<'WHY' --why \"<findings>\""})) == 6
+          and not why_quoting_problems(good["SKILL.md"], "rule 3", good["SKILL.md"], good))
+
+    # 01.3 fix g4: the `consider` findings print once, in the report's Done (templates/phase/report.md); step 8.2 no longer pastes them again from the
+    # run's raw `<n>-findings.json`. Seen red at a913be9:
+    #   FAIL: step 8.2 does not paste the consider findings a second time from `<n>-findings.json` -> names ['`result.consider`', '`consider` findings']
+    def consider_twice(text):
+        return [w for w in ("`result.consider`", "`consider` findings") if w in text]
+    check("step 8.2 does not paste the consider findings a second time from `<n>-findings.json`", not consider_twice(s8), "names %s" % consider_twice(s8))
+    check("control: a step 8.2 that pastes `result.consider` after the report is caught", bool(consider_twice("then: the `consider` findings (`result.consider` of the run")))
+
+    # 01.3 fix g8: open `agent-assumption` rows of decisions.tsv are a source of the report's Assumptions, for a resume or the close. Seen red at a913be9:
+    #   FAIL: part-report.md takes Assumptions also from the open `agent-assumption` rows of decisions.tsv -> missing `agent-assumption` or decisions.tsv
+    def assumption_sources(text):
+        return [w for w in ("`agent-assumption`", "decisions.tsv") if w not in text]
+    check("part-report.md takes Assumptions also from the open `agent-assumption` rows of decisions.tsv", not assumption_sources(rep_ref),
+          "missing %s" % ", ".join(assumption_sources(rep_ref)))
+    check("control: a part-report.md that takes assumptions only from the orchestrator's own choices is caught", len(assumption_sources("from the choices you made yourself (rule 6)")) == 2)
+
+    def closing_body(text):
+        return [w for w in ("templates/phase/report.md", '--why "PR <url>"', '--why "commit <sha>"') if w not in text] + (
+            [] if in_order(text, "templates/phase/report.md", "gh pr edit", "fwx stage <phase folder> closed") else ["the order template, gh pr edit, stage row"])
+    check("closing.md writes the pull request body from the same template and the closing stage row with the PR link", not closing_body(closing), "missing %s" % closing_body(closing))
+    check("control: a closing whose body has its own four sections is caught", bool(closing_body("`gh pr edit` with ## Why, ## What changed; `fwx stage <phase folder> closed`")))
+
+    # 01.3 r1-F1: evidence rows are written to the part folder (execute/run.py runs `verify --dir self.part`), so a phase with subphases has none in its
+    # own audit.tsv. The closing body must read them per part, fall back to the phase folder only when the plan has no subphases, and say a part
+    # with no row rather than guess. Seen red at eccd269 (closing.md read "the last `evidence` row of the phase's `audit.tsv`"):
+    #   FAIL: closing.md reads the evidence rows per part and says a part with none -> missing ["`evidence` row of each part's `audit.tsv`", "the phase folder's", 'no subphases', 'no evidence row']
+    def closing_evidence(text):
+        return [w for w in ("`evidence` row of each part's `audit.tsv`", "the phase folder's", "no subphases", "no evidence row") if w not in text]
+    check("closing.md reads the evidence rows per part and says a part with none", not closing_evidence(closing), "missing %s" % closing_evidence(closing))
+    check("control: a closing that reads only the phase's audit.tsv is caught",
+          bool(closing_evidence("the last `evidence` row of the phase's `audit.tsv` (the commit, the command and its exit code)")))
 
     # 09.4 D13: the budget nag is gone, so no session text tells an agent to run `fwx budget` or to read its fields, and no check reads the
     # deleted lib/fwx/commands/budget.py. Seen red before the texts changed (rule 7, step 2 and step 5 still named it):
@@ -389,7 +524,7 @@ def main():
         rc, tracked, untracked, _, _ = commit_effect(lines[0])
         phase = ".fwx/milestones/v1/phases/01-a"
         check("rule 4's commit line adds the documents and the demo pages", rc == 0 and all(f in tracked for f in (
-            ".fwx/PROJECT.md", ".fwx/milestones/v1/MILESTONE.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html")),
+            ".fwx/project.md", ".fwx/milestones/v1/milestone.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html")),
               "rc %s, tracked %s" % (rc, tracked))
         check("rule 4's commit line leaves demo-state.json, a log and a screenshot untracked", all(any(u.endswith(n) for u in untracked) for n in (
             "demo-state.json", "up.log", "ui-walk/1-1/shot.png", "demo/shot.png")) and not [f for f in tracked if f.endswith(("demo-state.json", ".log", ".png"))],
@@ -469,6 +604,33 @@ def main():
     asking = [n for n, t in (("SKILL.md rule 6", rule6_of(skill)), ("SKILL.md step 4", step(skill, 4)), ("SKILL.md step 8", s8),
                              ("references/ui-review.md", review), ("references/factory-return.md", scanned["references/factory-return.md"])) if "Recommended:" not in t]
     check("every question to the owner carries a `Recommended:` line", not asking, "no `Recommended:` in %s" % asking)
+    # CodeRabbit PR 279: a worker failure after execution starts is kept in the run state (`st["result"]["why"]`, not committed); the only reason on the
+    # branch is the `--why` of the stage row, and only when the factory gave one. Step 2 must say what to do when it has none. Seen red on the text at ced1761:
+    #   FAIL: factory-return.md step 2 says what to do when the stage row holds no reason -> step 2: 'Read why it came back. ... (the last one says why it stopped)'
+    fr_step2 = next((ln for ln in scanned["references/factory-return.md"].splitlines() if re.match(r"2\. \*\*Read why", ln)), "")
+    names_no_reason = lambda s: "no reason" in s
+    check("factory-return.md step 2 says what to do when the stage row holds no reason", names_no_reason(fr_step2), "step 2: %r" % fr_step2[:110])
+    check("control: a step 2 that trusts the last row is caught", not names_no_reason("2. **Read why it came back.** The last `stage` rows (the last one says why it stopped)"))
+    # 01.2 T23 (D2, D7): a phase holds a handful of rows (rule 6), and closing.md's step 3 carries the three tests of an ADR word for word from
+    # domain-modeling, with its copied-from header. Seen red at c538909 (the texts before this task):
+    #   FAIL: SKILL.md rule 6 says a phase holds a handful of rows -> rule 6 has no 'handful of rows'
+    #   FAIL: closing.md step 3 quotes the three ADR tests word for word, under a copied-from header -> missing ['**Hard to reverse**: the ...', ..., 'the copied-from header']
+    check("SKILL.md rule 6 says a phase holds a handful of rows", "handful of rows" in rule6_of(skill), "rule 6 has no 'handful of rows'")
+    check("control: a rule 6 without the line is caught", "handful of rows" not in rule6_of("6. **Questions.** Ask the owner only what needs his taste.\n## Steps"))
+    ADR_TESTS = ("**Hard to reverse**: the cost of changing your mind later is meaningful",
+                 "**Surprising without context**: a future reader will wonder \"why did they do it this way?\"",
+                 "**The result of a real trade-off**: there were genuine alternatives and you picked one for specific reasons")
+
+    def adr_problems(text):
+        step3 = next((ln for ln in text.splitlines() if re.match(r"3\. \*\*Record\.\*\*", ln)), "")
+        head = "\n".join(text.splitlines()[:6])
+        return ["%s ..." % t[:24] for t in ADR_TESTS if t not in step3] + ([] if re.search(
+            r"copied-from: mattpocock/skills skills/engineering/domain-modeling/SKILL\.md @49dd158", head) else ["the copied-from header"])
+    check("closing.md step 3 quotes the three ADR tests word for word, under a copied-from header", not adr_problems(closing), "missing %s" % adr_problems(closing))
+    good_adr = "<!-- copied-from: mattpocock/skills skills/engineering/domain-modeling/SKILL.md @49dd158 -->\n3. **Record.** " + "; ".join(ADR_TESTS) + "\n"
+    check("control: the good closing toy passes", adr_problems(good_adr) == [], "got %s" % adr_problems(good_adr))
+    check("control: a paraphrased test is caught", len(adr_problems(good_adr.replace("meaningful", "high"))) == 1)
+    check("control: a closing with no copied-from header is caught", adr_problems(good_adr.replace("copied-from:", "referent:")) == ["the copied-from header"])
     check("control: a decisions-agent line is caught", re.search(r"`(fwx:)?decisions`|decisions agent", "record it by the `decisions` agent") is not None)
     check("control: `decisions.tsv` is not a decisions-agent line", re.search(r"`(fwx:)?decisions`|decisions agent", "read `decisions.tsv`") is None)
     check("control: 'no recommendation unasked' is caught", re.search(r"no recommendation|unasked", "it carries no recommendation unasked", re.I) is not None)
@@ -510,8 +672,6 @@ def main():
 
     # controls of the checks above.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})
-    check("control: a step 8 that checks before it saves fails", not in_order("`state` returns; run fwx report lint on report-<n>.md, then `Write` it", "`state`", "report-<n>.md", "`Write`", "fwx report lint"))
-    check("control: a step 8 that saves then checks passes", in_order("`state` returns; save it to report-<n>.md with `Write`, then run fwx report lint", "`state`", "report-<n>.md", "`Write`", "fwx report lint"))
     check("control: step() cuts one numbered step", step("1. **A.** x\n2. **B.** y\n3. **C.** z\n", 2).startswith("2. **B.**") and "z" not in step("1. **A.** x\n2. **B.** y\n3. **C.** z\n", 2))
     check("control: revert before the question fails", not asks_before_revert("run wave new --revert 1, then ask: revert it?"))
     check("control: question before the revert passes", asks_before_revert("ask: revert it? Then wave new --revert 1"))

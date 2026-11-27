@@ -6,7 +6,7 @@
   apply [--json] [--milestone-map FILE] [--close IDS] [--open IDS]
       In a worktree, on a branch that is not the default one: `git mv` of what is kept, `git rm` of what is purged, the
       backlog (open quick tasks, `todos/pending`, `BACKLOG.md`, `999.x` phases) moved as it is, content not converted, to
-      `backlog/<its path>` under `.fwx/` (the workstream's folder in a workstream), the generated files (`milestones/<vN>/MILESTONE.md`
+      `backlog/<its path>` under `.fwx/` (the workstream's folder in a workstream), the generated files (`milestones/<vN>/milestone.md`
       with the base SHA and the recovery command, a `gsd-roadmap-entry.md` per open phase only the ROADMAP had, a stage row per closed phase through `state.append_audit`),
       the `.fwx/` twin under each `.gitignore` line that names `.planning/`, and the rules of each tracked `.gitignore` inside
       `.planning/` written anew at the matching folder of `.fwx/` (one that moves whole with rules that need no mapping just
@@ -105,10 +105,11 @@ RE_MS_ANY = re.compile(r"milestones/v(\d+)\.\d+-.*\Z")
 RE_AUDIT = re.compile(r"v(\d+)\.\d+-MILESTONE-AUDIT\.md\Z")
 # match kinds: name (a file at the scope root), tree (anything below the folder), glob (fnmatch on the path),
 #             regex (re.match on the path, group 1 is the milestone's major)
-# dest kinds: scope (<dest>/<same name>), actual (<dest>/milestones/<current>/<name>), major (<dest>/milestones/v<group 1>/<rest>),
+# dest kinds: lower (<dest>/<name in lower case>: the project document is `project.md`), actual (<dest>/milestones/<current>/<name>),
+#             major (<dest>/milestones/v<group 1>/<rest>),
 #             backlog (<dest>/backlog/<same path>: moved as it is, never converted), none (the file goes nowhere)
 ROWS = (
-    ("project", "keep", "name", ("PROJECT.md",), "scope"),
+    ("project", "keep", "name", ("PROJECT.md",), "lower"),
     ("milestone-docs", "keep", "name", MILESTONE_DOCS, "actual"),
     ("milestone-file", "keep", "regex", (RE_MS_ANY,), "major"),
     ("milestone-audit", "keep", "regex", (RE_AUDIT,), "major"),
@@ -545,8 +546,8 @@ def classify_tracked(sc, inner):
             continue
         rule, action, how, patterns, dest = row
         base = inner.rsplit("/", 1)[-1]
-        if dest == "scope":
-            return action, inner, rule
+        if dest == "lower":
+            return action, inner.lower(), rule
         if dest == "backlog":
             return action, "backlog/" + inner, rule
         if dest == "actual":
@@ -733,7 +734,7 @@ class Mapper:
         sc, head = self.scopes[None], SCOPE_DEST
         if len(parts) >= 2 and parts[0] == "workstreams":
             sc, head, parts = self.scopes.get(parts[1]), "%s/subprojects/%s" % (SCOPE_DEST, parts[1]), parts[2:]
-        tail = parts
+        tail = ["project.md"] if parts == ["PROJECT.md"] else parts    # the scope's project document is written lowercase (classify_tracked)
         if self.is_backlog(sc, parts):
             tail = ["backlog"] + parts
         elif parts and parts[0] == "phases":
@@ -1264,9 +1265,9 @@ def roadmap_section(text, number):
 
 
 def milestone_text(ms, base, totals_, state_ms):
-    """MILESTONE.md of the framework's template (2.3), with the milestone's name as its goal and the block that says where the
+    """milestone.md of the framework's template (2.3), with the milestone's name as its goal and the block that says where the
     files came from and how to get a removed one back."""
-    t = state._read_template("MILESTONE.md")
+    t = state._read_template("milestone.md")
     t = t.replace("<vN>", ms).replace("<name>", ms)
     t = t.replace("<What is true when this milestone is done, in a paragraph.>",
                   "%s, as GSD left it%s: its phases and documents keep their GSD names." % (ms, " (STATE said %s)" % state_ms if state_ms else ""))
@@ -1507,8 +1508,8 @@ def plan_apply(repo, opts):
             milestones.add((m.group(1), m.group(2)))
     taken = set(dests)
     for scope_dest, ms in sorted(milestones):
-        rel = "%s/milestones/%s/MILESTONE.md" % (scope_dest, ms)
-        if rel not in taken and not os.path.lexists(_abs(repo, rel)):
+        rel = "%s/milestones/%s/milestone.md" % (scope_dest, ms)
+        if rel not in taken and not os.path.lexists(_abs(repo, rel)) and not state.milestone_file(_abs(repo, os.path.dirname(rel))).exists():
             job.gens.append((rel, milestone_text(ms, base, job.totals, job.root_state)))
     # the bases file: one line per run, so that every base stays written down, in a file, after later merges and re-runs
     line = ("- %s base %s (branch %s): %d files moved (%d of them backlog, moved as they are to `backlog/`), %d files removed; "
@@ -1535,6 +1536,10 @@ def plan_apply(repo, opts):
     if BASES in job.bytes_of:
         with open(_abs(repo, BASES), "rb") as f:
             job.bytes_of[BASES][0] = f.read()
+    for sc in scopes:    # an unrenamed PROJECT.md of the owner's would win over the moved project.md in state.project_file
+        old = "%s/PROJECT.md" % sc.dest
+        if "%s/project.md" % sc.dest in dests and os.path.lexists(_abs(repo, old)):
+            extra_bad.append("%s exists" % old)
     extra_bad += audit_conflicts(repo, scopes)    # a file of the owner's at the phase's audit path: not apply's to extend
     bad = collisions(repo, dests + [g for g, _ in job.gens]) + extra_bad
     if bad:
