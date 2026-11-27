@@ -315,16 +315,27 @@ def main():
           "; ".join(filed_key_problems(rep_ref, template, step(skill, 5))))
     check("control: texts with no `filed:` record are caught", len(filed_key_problems("none filed", "## Outside\n## Evidence", "unfiled go in the `--why`")) == 3)
 
-    # 01.3 fix g11: step 5 puts reviewer and executor text (`outside:`, `filed:`) into a `--why`; inside double quotes a `$(...)` or backtick in it runs,
-    # so step 5 says once that such a `--why` goes through a single-quoted heredoc. Seen red at a504708:
-    #   FAIL: step 5 passes a `--why` that carries report text through a single-quoted heredoc -> step 5 has no `--why "$(cat <<'WHY'`; step 5 does not say the text is never pasted inside double quotes
-    def why_quoting_problems(step5):
-        return (["step 5 has no `--why \"$(cat <<'WHY'`"] if "`--why \"$(cat <<'WHY'`" not in step5 else []) + (
-            ["step 5 does not say the text is never pasted inside double quotes"] if "never pasted inside double quotes" not in step5 else [])
-    check("step 5 passes a `--why` that carries report text through a single-quoted heredoc", not why_quoting_problems(step(skill, 5)),
-          "; ".join(why_quoting_problems(step(skill, 5))))
-    check("control: a step 5 that quotes the `--why` in double quotes only is caught",
-          len(why_quoting_problems("putting each key in its `--why` as `filed: <where> - <KEY>`")) == 2)
+    # 01.3 fix g11, r1-F1 and r1-SO1 (fix-2): a `--why` that carries text of a report, a finding or the app under test (`filed:`, `outside:`, the walkers'
+    # findings) goes through a single-quoted heredoc, said once in rule 3; inside double quotes a `$(...)` or backtick in that text runs. Every
+    # `--why "<` site in skills/session/ must be the plain stage form `--why "<text>"`, steps 5 and 6 point at the rule, and the terminator is one
+    # no report line contains. Seen red at the r1-F1 commit (rule 3 had no heredoc; step 5 and 6 used the terminator `WHY`):
+    #   FAIL: every `--why` that carries report, finding or app text goes through the heredoc of rule 3 -> rule 3 has no `--why "$(cat <<'WHY_END_7f3a'`; rule 3 does not say the text is never pasted inside double quotes; step 5 does not point at rule 3; step 6 has no `--why "$(cat <<'WHY_END_7f3a'`; terminator `WHY` is a line a report may contain: SKILL.md
+    def why_quoting_problems(rules, step5, step6, all_texts):
+        form = "--why \"$(cat <<'WHY_END_7f3a'"
+        return (["rule 3 has no `%s`" % form] if form not in rules else []) + (
+            ["rule 3 does not say the text is never pasted inside double quotes"] if "never pasted inside double quotes" not in rules else []) + (
+            ["step 5 does not point at rule 3"] if "rule 3" not in step5 else []) + (
+            ["step 6 has no `%s`" % form] if form not in step6 else []) + [
+            "terminator `WHY` is a line a report may contain: %s" % rel for rel, t in all_texts.items() if "<<'WHY'" in t] + [
+            "double-quoted `--why \"<%s>\"` in %s" % (w, rel) for rel, t in all_texts.items() for w in re.findall(r'--why "<([^>]*)>', t) if w != "text"]
+    rules_of_skill = skill.split("## Steps")[0]
+    check("every `--why` that carries report, finding or app text goes through the heredoc of rule 3",
+          not why_quoting_problems(rules_of_skill, step(skill, 5), step(skill, 6), texts),
+          "; ".join(why_quoting_problems(rules_of_skill, step(skill, 5), step(skill, 6), texts)))
+    good = {"SKILL.md": "--why \"$(cat <<'WHY_END_7f3a'` never pasted inside double quotes, rule 3, --why \"<text>\""}
+    check("control: texts with no heredoc rule, the old terminator and a double-quoted findings `--why` are caught",
+          len(why_quoting_problems("a --why", "step", "wave fix --why \"<findings>\"", {"SKILL.md": "<<'WHY' --why \"<findings>\""})) == 6
+          and not why_quoting_problems(good["SKILL.md"], "rule 3", good["SKILL.md"], good))
 
     # 01.3 fix g4: the `consider` findings print once, in the report's Done (templates/phase/report.md); step 8.2 no longer pastes them again from the
     # run's raw `<n>-findings.json`. Seen red at a913be9:
