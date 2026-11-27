@@ -148,8 +148,7 @@ class World:
         with open(os.path.join(self.root, "credentials", "secrets.json"), "w") as fh:
             fh.write("{}\n")
         os.symlink(os.path.join("..", "credentials", "secrets.json"), os.path.join(cfg, "secrets.json"))
-        os.makedirs(os.path.join(self.root, "docs"), exist_ok=True)
-        shutil.copy(os.path.join(self.root, "examples", "AGENT-SYSTEM.md"), os.path.join(self.root, "docs", "AGENT-SYSTEM.md"))
+        shutil.copy(os.path.join(self.root, "examples", "AGENT-SYSTEM.md"), os.path.join(cfg, "AGENT-SYSTEM.md"))
         bin_dir = sandbox.stub_claude(os.path.join(self.top, "bin"), os.path.join(self.logs, "claude.log")) if framework else None
         self.env = sandbox.bare_env(self.home, self.tmp, bin_dir, FORGE_WRITE_LOG=os.path.join(self.logs, "writes.log"),
                                     GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",

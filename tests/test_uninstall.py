@@ -487,16 +487,16 @@ write(md, mixed)
 code, out = w.forge("uninstall", "--apply")
 check("one old and one new block: CLAUDE.md untouched and named -- %r" % read(md)[:120], read(md) == mixed and bang_lines(out, "CLAUDE.md"), out)
 
-# F9: the canonical docs/AGENT-SYSTEM.md is missing. Red on 34c191b: 'Traceback ... FileNotFoundError' in both runs.
+# F9: the canonical config/AGENT-SYSTEM.md is missing. Red on 34c191b: 'Traceback ... FileNotFoundError' in both runs.
 w = World("nodoc")
-os.rename(os.path.join(w.root, "docs", "AGENT-SYSTEM.md"), os.path.join(w.top, "AGENT-SYSTEM.md.aside"))
+os.rename(os.path.join(w.root, "config", "AGENT-SYSTEM.md"), os.path.join(w.top, "AGENT-SYSTEM.md.aside"))
 for args in ((), ("--apply",)):
     code, out = w.forge("uninstall", *args)
     check("canonical doc missing %s: no traceback, a '  ! ' line, exit 1 -- exit %d: %s" % (args, code, sandbox.tail(out, 3)),
           "Traceback" not in out and code == 1 and bang_lines(out, "AGENT-SYSTEM.md"), out)
 check("canonical doc missing: the project's copy stays", os.path.isfile(os.path.join(w.app, ".claude", "AGENT-SYSTEM.md")))
 # The same for one that is not UTF-8 (Codex's review). Red before its fix: 'UnicodeDecodeError' traceback.
-with open(os.path.join(w.root, "docs", "AGENT-SYSTEM.md"), "wb") as fh:
+with open(os.path.join(w.root, "config", "AGENT-SYSTEM.md"), "wb") as fh:
     fh.write(b"\xff\xfe not utf-8")
 code, out = w.forge("uninstall")
 check("canonical doc not UTF-8: no traceback, a '  ! ' line, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),

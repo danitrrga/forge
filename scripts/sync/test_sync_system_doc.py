@@ -76,12 +76,12 @@ def world(case):
     WORLDS[t] = case
     root, home, projects = (os.path.join(t, d) for d in ("forge", "home", "projects"))
     sandbox.mini_root(root, SCRIPT, os.path.join("forge", "owned.py"), os.path.join("forge", "system_doc.py"))  # the script claims what it creates
-    # The canonical doc is the fixture's, never this checkout's docs/AGENT-SYSTEM.md, which a checkout without
-    # docs/ lacks: red before, on a copy_engine copy in a toy HOME (M1), "FileNotFoundError: [Errno 2] No such
-    # file or directory: '.../docs/AGENT-SYSTEM.md'" from mini_root's copy. The cases compare copies of it with
+    # The canonical doc is the fixture's, never this checkout's config/AGENT-SYSTEM.md, which a copy_engine copy lacks:
+    # red before, on a copy_engine copy in a toy HOME (M1), "FileNotFoundError: [Errno 2] No such
+    # file or directory: '.../docs/AGENT-SYSTEM.md'" (its path before it moved to config/) from mini_root's copy. The cases compare copies of it with
     # the doc they wrote, never with its text.
-    os.makedirs(os.path.join(root, "docs"))
-    shutil.copy(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "AGENT-SYSTEM.md"), os.path.join(root, "docs", "AGENT-SYSTEM.md"))
+    os.makedirs(os.path.join(root, "config"), exist_ok=True)
+    shutil.copy(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "AGENT-SYSTEM.md"), os.path.join(root, "config", "AGENT-SYSTEM.md"))
     os.makedirs(home)
     for name, extra in (("toy", {}), ("portal", {"frozen": True, "writes_tracked_files": False})):
         pp = os.path.join(projects, name)

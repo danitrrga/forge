@@ -7,11 +7,11 @@ import os
 from forge import lib
 
 ROOT_FS = lib.ROOT.replace("\\", "/")  # forward-slash form for doc text
-CANON = os.path.join(lib.ROOT, "docs", "AGENT-SYSTEM.md")
+CANON = os.path.join(lib.ROOT, "config", "AGENT-SYSTEM.md")
 
 GEN_BANNER = (
     "<!-- GENERATED — DO NOT EDIT. Synced from "
-    + ROOT_FS + "/docs/AGENT-SYSTEM.md by "
+    + ROOT_FS + "/config/AGENT-SYSTEM.md by "
     "scripts/sync/sync_system_doc.py. Edit the canonical copy in forge. -->\n\n"
 )
 

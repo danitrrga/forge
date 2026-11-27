@@ -19,7 +19,7 @@
    "wrote  config/mcp-registry.json",
    "wrote  credentials/secrets.json",
    "linked config/secrets.json",
-   "wrote  docs/AGENT-SYSTEM.md",
+   "wrote  config/AGENT-SYSTEM.md",
    "made   skills/",
    "set    git config core.hooksPath githooks",
    "== forge init: skills ==",

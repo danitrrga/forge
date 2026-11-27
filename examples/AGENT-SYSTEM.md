@@ -10,7 +10,7 @@ secrets, memory or hooks.
 > they are overwritten, so a hand edit is lost on the next SessionStart.
 
 This file is a synced copy (`.claude/AGENT-SYSTEM.md` in each project, git-ignored). The canonical one is
-`docs/AGENT-SYSTEM.md` in forge; edit that, then run `python3 scripts/sync/sync_system_doc.py --apply`.
+`config/AGENT-SYSTEM.md` in forge; edit that, then run `python3 scripts/sync/sync_system_doc.py --apply`.
 
 ## Never hand-edit these
 
@@ -47,7 +47,7 @@ change), then with `--apply`, and restart the affected session.
 | Add a hook for every session | a row in `user_hooks` in `config/forge.json` (forge writes `~/.claude/settings.json`, and `~/.codex/hooks.json` for a row that lists `codex` while `codex_harness` is true) | `python3 bin/forge sync --apply --all` |
 | Add a hook for one project | the project's own `.claude/settings.json`, which forge never touches; use an absolute path and the interpreter for the file (`python3`, `node`, `bash`) | restart the session |
 | Switch an integration on or off | `integrations` in `config/forge.json` | `python3 bin/forge sync --apply --all` |
-| Edit this document | `docs/AGENT-SYSTEM.md` in forge | `python3 scripts/sync/sync_system_doc.py --apply` |
+| Edit this document | `config/AGENT-SYSTEM.md` in forge | `python3 scripts/sync/sync_system_doc.py --apply` |
 
 `forge sync` without `--apply` changes nothing. `forge sync NAME` limits it to one project and writes no
 user-scope file; `--all` runs every project even from inside a session.

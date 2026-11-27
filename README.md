@@ -180,7 +180,7 @@ To type `forge` instead, link it onto your PATH: `ln -s ~/forge/bin/forge ~/.loc
 and only for a tool it found: manage Codex's config too. `--yes` takes every detected default,
 `--with a,b` and `--without a,b` switch integrations, and `--track` gives your data its own local git history.
 It then writes your data into the checkout: `config/forge.json` (your switches), a project file for the checkout
-itself, an empty MCP registry, `credentials/secrets.json` (mode 600), `docs/AGENT-SYSTEM.md` and an empty
+itself, an empty MCP registry, `credentials/secrets.json` (mode 600), `config/AGENT-SYSTEM.md` and an empty
 `skills/`. Then it runs `forge skills --apply`, then `forge sync --apply --all`, which installs the SessionStart hook, and
 exits with `forge doctor`'s status.
 

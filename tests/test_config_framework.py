@@ -108,9 +108,8 @@ class World:
         os.makedirs(os.path.join(self.root, "credentials"), mode=0o700)
         write_json(os.path.join(self.root, "credentials", "secrets.json"), {})
         os.symlink(os.path.join("..", "credentials", "secrets.json"), os.path.join(cfg, "secrets.json"))
-        os.makedirs(os.path.join(self.root, "docs"), exist_ok=True)
         with open(os.path.join(self.root, "examples", "AGENT-SYSTEM.md"), encoding="utf-8") as fh, \
-                open(os.path.join(self.root, "docs", "AGENT-SYSTEM.md"), "w", encoding="utf-8") as out:
+                open(os.path.join(cfg, "AGENT-SYSTEM.md"), "w", encoding="utf-8") as out:
             out.write(fh.read())
         for name, body in PROJECTS.items():
             write_json(os.path.join(cfg, "projects", name + ".claude.json"), dict(body, project=name, project_path=self.pp(name)))
