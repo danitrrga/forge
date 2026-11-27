@@ -149,9 +149,21 @@ def main():
     rc, out = run("--apply")
     check("a second --apply changes nothing", rc == 0 and "0 change(s) applied." in out, out)
 
+    # A checkout installed before the move still has docs/AGENT-SYSTEM.md and no config/ copy: master's code runs at its next
+    # SessionStart before the owner moves the file, so the doc in docs/ is read until config/ has one, and the banner names it.
+    os.makedirs(os.path.join(root, "docs"), exist_ok=True)
+    os.replace(os.path.join(root, "config", "AGENT-SYSTEM.md"), os.path.join(root, "docs", "AGENT-SYSTEM.md"))
+    probe = ("import sys, os; sys.path.insert(0, %r); from forge import system_doc as m; "
+             "sys.stdout.write(repr((os.path.relpath(m.CANON, %r), '/docs/AGENT-SYSTEM.md by ' in m.GEN_BANNER)))" % (root, root))
+    r = subprocess.run([sys.executable, "-c", probe], cwd=tmp, env=env, capture_output=True, text=True, timeout=60)
+    check("with only docs/AGENT-SYSTEM.md, the canonical doc is that one and the banner names it",
+          r.stdout == repr(("docs/AGENT-SYSTEM.md", True)), "got " + r.stdout + r.stderr)
+    rc, out = run("--apply")
+    check("with only docs/AGENT-SYSTEM.md, --apply exits 0", rc == 0 and "canonical doc missing" not in out, out)
+
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 13 cases" % len(failures))
+    print("%d failure(s) over 15 cases" % len(failures))
     sandbox.cleanup(failures)
     sys.exit(1 if failures else 0)
 

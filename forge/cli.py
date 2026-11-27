@@ -1857,7 +1857,8 @@ def init_write(integrations, track):
     else:
         lib.symlink(os.path.join("..", "credentials", "secrets.json"), link)
         print("linked %s" % rel(link))
-    put(os.path.join(lib.ROOT, "config", "AGENT-SYSTEM.md"), example_text("AGENT-SYSTEM.md"))
+    from forge import system_doc
+    put(system_doc.CANON, example_text("AGENT-SYSTEM.md"))  # docs/AGENT-SYSTEM.md of a checkout from before the move is kept
     skills_dir = os.path.join(lib.ROOT, "skills")
     if not os.path.isdir(skills_dir):
         lib.makedirs(skills_dir)

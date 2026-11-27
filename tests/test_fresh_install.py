@@ -627,7 +627,10 @@ def kept_world():
     w = World("kept")
     os.makedirs(w.path("config"), exist_ok=True)
     os.makedirs(w.path("credentials"))
-    mine = {"config/mcp-registry.json": '{"servers": {}, "_doc": "mine"}\n', "credentials/secrets.json": '{"TOKEN": "mine"}\n'}
+    os.makedirs(w.path("docs"), exist_ok=True)
+    # docs/AGENT-SYSTEM.md is where the canonical doc lived before it moved to config/: init writes no example beside it.
+    mine = {"config/mcp-registry.json": '{"servers": {}, "_doc": "mine"}\n', "credentials/secrets.json": '{"TOKEN": "mine"}\n',
+            "docs/AGENT-SYSTEM.md": "# my system doc\n"}
     for rel, text in mine.items():
         with open(w.path(rel), "w") as fh:
             fh.write(text)
@@ -635,6 +638,7 @@ def kept_world():
     check("init over existing data exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
     for rel, text in mine.items():
         check("init keeps %s" % rel, open(w.path(rel)).read() == text and "kept   %s" % rel in out, "now %r; %s" % (open(w.path(rel)).read(), tail(out, 20)))
+    want("init writes no config/AGENT-SYSTEM.md over a docs/AGENT-SYSTEM.md", os.path.exists(w.path("config", "AGENT-SYSTEM.md")), False)
 
 
 def other_checkout_world():
