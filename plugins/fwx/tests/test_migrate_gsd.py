@@ -714,6 +714,14 @@ r = refusal("apply with a destination that exists (.fwx/project.md)", wt, ["appl
 with open(os.path.join(wt, ".fwx/project.md"), encoding="utf-8") as fh:
     s.eq("... destination existed and was overwritten", fh.read(), "mine\n")
 
+# an owner's PROJECT.md (not yet renamed) is in the way as much as a project.md: state.project_file would prefer the moved file
+repo, wt = world()
+roots = (wt, os.path.join(repo, ".git"))
+helpers.write(wt, ".fwx/PROJECT.md", "mine\n")
+helpers.git(wt, "add", ".fwx/PROJECT.md")
+helpers.git(wt, "commit", "-q", "-m", "a .fwx/PROJECT.md of its own")
+refusal("apply with a .fwx/PROJECT.md of the owner's", wt, ["apply"], ".fwx/PROJECT.md exists", roots)
+
 repo, wt = world()
 roots = (wt, os.path.join(repo, ".git"))
 helpers.write(wt, ".gitignore", "node_modules/\n/.fwx/\n")
