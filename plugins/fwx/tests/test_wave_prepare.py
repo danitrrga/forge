@@ -93,6 +93,14 @@ def front(obj):
     return "---\n%s\n---\n\nbody\n" % json.dumps(obj, indent=1)
 
 
+def orca_dir():
+    """A folder holding an `orca` that does nothing: `wave new` on the session plane only asks that `orca` is on PATH, so a case that is not about
+    Orca gets one and passes on a machine that has none (CI)."""
+    d = helpers.mkdtemp("fwx-orca-stub-")
+    helpers.write(d, "orca", "#!/bin/sh\nexit 0\n", 0o755)
+    return d
+
+
 class Scene:
     """A main checkout on master, a linked worktree on `phase` (or, with wt=False, the main one on `phase`), the part's
     folder in the main checkout's `.fwx/`, the project's configuration and settings in its ignored `.claude/`."""
@@ -118,7 +126,7 @@ class Scene:
         self.conf = helpers.mkdtemp("fwx-claude-")
         if user is not None:
             helpers.write(self.conf, "settings.json", json.dumps(user))
-        self.env = {"CLAUDE_CONFIG_DIR": self.conf}
+        self.env = {"CLAUDE_CONFIG_DIR": self.conf, "PATH": orca_dir() + os.pathsep + os.environ["PATH"]}
         if wt and nested:
             self.cwd = self.worktree(self.part_repo)
         elif wt:
@@ -811,10 +819,12 @@ def case_base_timeout(R, S):
     S.ok("timeout: the message names the limit the project set (2 s), not a fixed one", code == 77 and "timed out after 2 s" in err, "exit %s: %s" % (code, err[:300]))
 
 
-def tool_dir(gh=None):
-    """A PATH of its own: git and the shells, and `gh` only when `gh` is given (the shell text of a fake: it logs its arguments
-    to `calls`, next to it, and then runs `gh`). Without one, no gh exists for the run, whatever this machine has installed."""
+def tool_dir(gh=None, orca=True):
+    """A PATH of its own: git and the shells, an `orca` that does nothing unless `orca` is False, and `gh` only when `gh` is given (the shell text of a
+    fake: it logs its arguments to `calls`, next to it, and then runs `gh`). Without one, no gh exists for the run, whatever this machine has installed."""
     d = helpers.mkdtemp("fwx-tools-")
+    if orca:
+        os.symlink(os.path.join(orca_dir(), "orca"), os.path.join(d, "orca"))
     for tool in ("git", "bash", "sh"):
         found = shutil.which(tool)
         if found:
@@ -943,6 +953,27 @@ def case_nested(R, S):
     S.ok("nested: nothing of fwx's is made in a's own .git", not os.path.exists(os.path.join(sc.nested["a"], ".git", "fwx")))
 
 
+def case_orca_missing(R, S):
+    """`wave run` drives every agent as an Orca worker, so a session-plane `wave new` (and the `wave run` that starts with it) on a machine with no `orca` on PATH
+    refuses before the base checks (exit 2, one line naming what to install) instead of letting the run fail late with `orca: orca repo list: [Errno 2] No such
+    file or directory: 'orca'` and a failed run left behind. The factory plane has its own seam and is not asked. PATH here is the shells and the VCS only.
+    Seen failing on the code before the preflight:
+      FAIL: orca missing: exit: got 0, want 2
+      FAIL: orca missing: the base checks did not run: got 1, want 0
+      FAIL: orca missing: the refusal names orca and what to install: stderr 'fwx wave new: base checks: CI not used (project.default_branch is not set); running the checks here\\n'"""
+    runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
+    sc = Scene(recipe=[counting(runs)])
+    r = sc.prepare(R, env={"PATH": tool_dir(orca=False)})
+    S.eq("orca missing: exit", r.returncode, 2)
+    S.eq("orca missing: stdout empty", r.stdout, "")
+    S.eq("orca missing: the base checks did not run", ran(runs), 0)
+    S.ok("orca missing: the refusal names orca and what to install", "orca" in r.stderr and "install Orca" in r.stderr and len(r.stderr.strip().splitlines()) == 1,
+         "stderr %r" % r.stderr[:300])
+    S.ok("orca missing: nothing written", not sc.audit_exists())
+    r = sc.prepare(R, plane="factory", env={"PATH": tool_dir(orca=False)})
+    S.eq("orca missing: the factory plane does not need it", (r.returncode, ran(runs)), (0, 1))
+
+
 def start(R, sc):
     """`wave new` of `sc` started and not waited for: a Popen with both pipes, in the toy's environment."""
     return subprocess.Popen([sys.executable, os.path.join(R.root, "bin", "fwx"), "wave", "new", "--part-dir", sc.part, "--plane", "session",
@@ -1021,13 +1052,16 @@ def case_run_id_claimed(R, S):
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_small_plan, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout, case_base_ci, case_nested, case_base_gate_lock, case_run_id_claimed]
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout, case_base_ci, case_nested, case_base_gate_lock, case_run_id_claimed, case_orca_missing]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
 # whose `old` has gone is an error, never a silent pass.
 P, B, CG = "lib/fwx/execute/prepare.py", "lib/fwx/execute/base.py", "lib/fwx/core/ci_gate.py"  # CG: where the base check of CI lives (09.6 T64)
 MUTANTS = [
+    ("orca not asked for", case_orca_missing, P, "    need_orca(plane, environ)\n", "", "orca missing: exit: got 0, want 2"),
+    ("orca asked for on the factory plane too", case_orca_missing, P, 'if plane == "session" and shutil.which', "if shutil.which",
+     "orca missing: the factory plane does not need it"),
     ("clash not marked", case_clash, P, 'serial = any(c["wave"] == n for c in clashes)', "serial = False", "wave 1 serial=False, want True"),
     ("red base not run", case_red_base, P, "results = [verify.run_check(c, top, timeout) for c in recipe]", "results = []",
      "prepare exit 0 on a red base"),

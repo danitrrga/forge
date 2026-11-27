@@ -9,7 +9,7 @@ The part is `part_dir`: a phase folder, a subphase folder (it uses the `context.
 holds it) or a job folder. Its `plan.md` and `postmortem.md` must load (`plan.load_plan`, `plan.load_postmortem`); a missing
 `postmortem.md` is accepted only for a `small` plan that says `security_review` (_security_why: the planner's answer and a task on a
 default protected path or a `project.protected_paths` glob stand in for the post-mortem's). Refused with
-exit 2, in this order of cost: a plan that does not load; a checkout that is not a worktree of the repository the part works in (the plan's `repo`,
+exit 2, in this order of cost: no `orca` on PATH on the session plane (`need_orca`, before anything is read); a plan that does not load; a checkout that is not a worktree of the repository the part works in (the plan's `repo`,
 else the workspace: nested repos, `project.repos`); a task file that git ignores (the executor could not commit it); the
 requested branch is a default branch, or is not the one the checkout is on; the checkout holds uncommitted work; the effective
 `worktree.baseRef` is not `head`; the project has no checks. Why the baseRef: without it a workflow agent's worktree is made from
@@ -53,13 +53,14 @@ so a refusal and a red base leave nothing behind. With `--fix` the one brief is 
 plan get none; with `--revert` nothing is launched, so there is none. `--fix` and `--control-findings` are lists of findings in the
 shape of plan C.5 (execute/brief.py `finding_problems`), or the rows of a walk's fix.json (`normalize`), `--revert` a list of finding ids; anything else is refused.
 
-Imports the standard library, fwx.plan, plan_form, plan_step, state, config, core.ci_gate, core.evidence, core.rounds, core.verify and execute.base, execute.brief and execute.worktree_setup.
+Imports the standard library (shutil: `need_orca` looks for `orca` on PATH), fwx.plan, plan_form, plan_step, state, config, core.ci_gate, core.evidence, core.rounds, core.verify and execute.base, execute.brief and execute.worktree_setup.
 """
 import itertools
 import json
 import os
 import re
 import shlex
+import shutil
 
 from fwx import config, plan, plan_form, plan_step, state
 from fwx.core import ci_gate, evidence, rounds, verify
@@ -69,6 +70,15 @@ from fwx.execute.base import WaveError, git, linked, out, toplevel
 PLANES = ("session", "factory")
 STARTS = ("gate",)
 _PHASE_NAME = re.compile(r"\d+(\.\d+)*-.+\Z")
+
+
+def need_orca(plane, environ=None):
+    """The session plane drives every agent as an Orca worker (execute/orca.py), so without `orca` on PATH a run would fail late and leave a failed run
+    behind: refuse first, naming what to install. The factory plane has its own seam."""
+    environ = os.environ if environ is None else environ
+    if plane == "session" and shutil.which("orca", path=environ.get("PATH", os.defpath)) is None:
+        raise WaveError("orca is not on PATH: `wave run` drives each agent as an Orca worker, so install Orca (the desktop app) and its CLI "
+                        "(Settings in Orca) first; discuss, plan and the mortems do not need it")
 
 
 class NotRun(Exception):
@@ -395,6 +405,7 @@ def _prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix
     environ = os.environ if environ is None else environ
     if plane not in PLANES:
         raise WaveError("--plane is %r, not one of %s" % (plane, ", ".join(PLANES)))
+    need_orca(plane, environ)
     if start is not None and start not in STARTS:
         raise WaveError("--from is %r, not one of %s" % (start, ", ".join(STARTS)))
     if start and (fix or revert is not None):

@@ -1,0 +1,14 @@
+{
+  "name": "fwx",
+  "description": "The fwx plugin, served from the plugins/fwx folder of this repository.",
+  "owner": {
+    "name": "fwx maintainers"
+  },
+  "plugins": [
+    {
+      "name": "fwx",
+      "source": "./plugins/fwx",
+      "description": "A structured way to run Claude Code on a software project: plans, waves of agents, and the checks that gate them."
+    }
+  ]
+}

@@ -1458,10 +1458,33 @@ def case_reply_line(root, S):
         S.ok("a reply line with no folder before .fwx-agent/: %s" % line.split()[0], bool(orca_mod.REPLY_LINE.match(line)), "no match for %r" % line)
 
 
+def case_orca_missing(root, S):
+    """With no `orca` on PATH a session-plane `wave run`, fresh or resumed, is refused before the base checks, a run record or any Orca call (exit 2, one line that
+    names what to install). Before the preflight a fresh one ran the base, then ended `run <R> failed: orca: orca repo list: [Errno 2] No such file or directory:
+    'orca'` with its record left in `wave list`. Seen failing on the code before it (PATH of the VCS and the shells only):
+      FAIL: orca missing: a fresh run is refused, no run record: got (1, ['01-alpha-5d676eb-1']), want (2, [])
+      FAIL: orca missing: a resumed run is refused: got (1, False, []), want (2, True, [])"""
+    w = world()
+    tools = helpers.mkdtemp("fwx-tools-")
+    for tool in ("git", "sh", "bash"):
+        if shutil.which(tool):
+            os.symlink(shutil.which(tool), os.path.join(tools, tool))
+    r = subprocess.run(w.argv(root), cwd=w.cwd, env=w.env(PATH=tools), capture_output=True, text=True, timeout=60)
+    S.eq("orca missing: a fresh run is refused, no run record", (r.returncode, w.runs()), (2, []))
+    S.ok("orca missing: one line names what to install", "install Orca" in r.stderr and len(r.stderr.strip().splitlines()) == 1, "stderr %r" % r.stderr[-300:])
+    S.eq("orca missing: no Orca call", w.calls(), [])
+    name = "01-alpha-0000000-8"
+    helpers.write(os.path.join(w.common, "fwx", "runs", name), "state.json", json.dumps({
+        "run": name, "branch": "phase", "part_dir": w.part, "pid": 2 ** 22 + 1, "state": "active", "step": "wave 1", "workers": {}, "worktrees": [], "steps": [],
+        "flags": {"control": None}, "args": {"plane": "session", "unattended": False}}))
+    r = subprocess.run(w.argv(root, "--resume", name), cwd=w.cwd, env=w.env(PATH=tools), capture_output=True, text=True, timeout=60)
+    S.eq("orca missing: a resumed run is refused", (r.returncode, "install Orca" in r.stderr, w.calls()), (2, True, []))
+
+
 CASES = [case_reply_line, case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
          case_one_run, case_list_order, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
          case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace,
-         case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_terminal_discover, case_list_json]
+         case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_terminal_discover, case_list_json, case_orca_missing]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""
@@ -1477,6 +1500,10 @@ def mutant_tree(path, old, new):
 
 
 MUTANTS = [
+    ("orca not asked for on a fresh run", case_orca_missing, "lib/fwx/execute/prepare.py", "    need_orca(plane, environ)\n", "",
+     "orca missing: a fresh run is refused, no run record"),
+    ("orca not asked for on a resumed run", case_orca_missing, "lib/fwx/commands/wave.py", '            prep.need_orca(saved["args"].get("plane"))\n', "",
+     "orca missing: a resumed run is refused"),
     ("the cap read as unlimited", case_loop, "lib/fwx/execute/run.py", "self.cap = args[\"cap\"]", "self.cap = 10 ** 6", "never more open workers than the cap -> 2 open, cap 1"),
     ("cleanup without the run's worktrees", case_loop, "lib/fwx/execute/cleanup.py", "or w[\"path\"] in owned", "or False", "a reviewer worktree with no commit is removed -> kept"),
     ("release with no stop before it", case_loop, "lib/fwx/execute/orca.py", "if state not in SETTLED:", "if False:", "every dispatch is released -> dispatch_inactive"),

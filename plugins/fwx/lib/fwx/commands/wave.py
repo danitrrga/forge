@@ -193,6 +193,7 @@ def do_run(argv):
             saved = run_mod.load_state(top, got["--resume"])
             if saved["state"] != "active":
                 raise base.WaveError("run %s ended %s: there is nothing to resume" % (saved["run"], saved["state"]))
+            prep.need_orca(saved["args"].get("plane"))
             if orch and (saved["args"].get("plane") == "factory" or saved["args"].get("unattended")):
                 raise base.WaveError("--orchestrator: run %s is a factory or unattended run, which has nobody to steer it" % saved["run"])
         branch = saved["branch"] if saved else got["--branch"]
