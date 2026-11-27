@@ -54,7 +54,7 @@ GOOD = [
     "project.md", "adr.tsv", "tree.excalidraw", "milestones/v2/milestone.md",
     "research/chart.png", "milestones/v2/phases/01-x/demo/3/index.html",
     "durable/x.md", "subprojects/a/project.md", "subprojects/a/milestones/v1/milestone.md",
-    "factory/K-1/plan.md",
+    "factory/K-1/plan.md", "subprojects/a/factory/K-1/plan.md",
     "milestones/v2/phases/01-x/context.md", "milestones/v2/phases/01-x/decisions.tsv",
     "milestones/v2/phases/01-x/state.md", "milestones/v2/phases/01-x/report-1.md",
     "milestones/v2/phases/01-x/research/notes.md",
@@ -67,6 +67,8 @@ BAD = {
     "milestones/v2/phases/02-open/02.1-sub/state.md": "closed or cancelled",
     "research/Chart.PNG": "research/chart.png",
     "milestones/v2/phases/01-x/notes.md": "research",
+    "research/subprojects/a/factory/UPPER.md": "research/subprojects/a/factory/upper.md",   # only `factory/<KEY>` at a scope root is exempt
+    "factory/K 1/plan.md": "factory/K-1/plan.md",                                           # a space is refused in a key too
 }
 
 for p in GOOD:

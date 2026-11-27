@@ -31,11 +31,11 @@ _REPORT = re.compile(r"report-\d+\.md\Z")
 
 def _exempt(parts, i):
     """Whether component i is a factory job key: `factory/<KEY>` at the root of a scope."""
-    return i >= 1 and parts[i - 1] == "factory" and (i == 1 or (i >= 4 and parts[i - 3] == "subprojects"))
+    return (i == 1 and parts[0] == "factory") or (i == 3 and parts[0] == "subprojects" and parts[2] == "factory")
 
 
 def _lowered(parts):
-    return [c if _exempt(parts, i) else c.lower().replace(" ", "-") for i, c in enumerate(parts)]
+    return [c.replace(" ", "-") if _exempt(parts, i) else c.lower().replace(" ", "-") for i, c in enumerate(parts)]
 
 
 def _closed(root, folder):
