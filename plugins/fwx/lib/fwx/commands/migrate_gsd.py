@@ -1536,6 +1536,10 @@ def plan_apply(repo, opts):
     if BASES in job.bytes_of:
         with open(_abs(repo, BASES), "rb") as f:
             job.bytes_of[BASES][0] = f.read()
+    for sc in scopes:    # an unrenamed PROJECT.md of the owner's would win over the moved project.md in state.project_file
+        old = "%s/PROJECT.md" % sc.dest
+        if "%s/project.md" % sc.dest in dests and os.path.lexists(_abs(repo, old)):
+            extra_bad.append("%s exists" % old)
     extra_bad += audit_conflicts(repo, scopes)    # a file of the owner's at the phase's audit path: not apply's to extend
     bad = collisions(repo, dests + [g for g, _ in job.gens]) + extra_bad
     if bad:
