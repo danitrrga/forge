@@ -303,6 +303,14 @@ def main():
     check("control: texts that read Linear keys from the run's json are caught",
           len(linear_key_problems("take their Linear keys from it", "## Outside\n## Evidence", "because the part report reads them back from the stage rows")) == 5)
 
+    # 01.3 fix g4: the `consider` findings print once, in the report's Done (templates/phase/report.md); step 8.2 no longer pastes them again from the
+    # run's raw `<n>-findings.json`. Seen red at a913be9:
+    #   FAIL: step 8.2 does not paste the consider findings a second time from `<n>-findings.json` -> names ['`result.consider`', '`consider` findings']
+    def consider_twice(text):
+        return [w for w in ("`result.consider`", "`consider` findings") if w in text]
+    check("step 8.2 does not paste the consider findings a second time from `<n>-findings.json`", not consider_twice(s8), "names %s" % consider_twice(s8))
+    check("control: a step 8.2 that pastes `result.consider` after the report is caught", bool(consider_twice("then: the `consider` findings (`result.consider` of the run")))
+
     def closing_body(text):
         return [w for w in ("templates/phase/report.md", '--why "PR <url>"', '--why "commit <sha>"') if w not in text] + (
             [] if in_order(text, "templates/phase/report.md", "gh pr edit", "fwx stage <phase folder> closed") else ["the order template, gh pr edit, stage row"])
