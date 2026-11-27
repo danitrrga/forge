@@ -502,6 +502,17 @@ code, out = w.forge("uninstall")
 check("canonical doc not UTF-8: no traceback, a '  ! ' line, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
       "Traceback" not in out and code == 1 and bang_lines(out, "AGENT-SYSTEM.md"), out)
 
+# A project frozen before the canonical doc moved from docs/ to config/ keeps a copy whose banner names docs/AGENT-SYSTEM.md (the
+# sync never rewrites a frozen project); that copy is still forge's, so uninstall removes it (Gemini's review of PR 281).
+# Seen failing on 4246928: "FAIL a copy whose banner names docs/AGENT-SYSTEM.md is removed" ("104 checks, 1 failed").
+w = World("olddocbanner")
+copy = os.path.join(w.app, ".claude", "AGENT-SYSTEM.md")
+synced = read(copy)
+check("olddocbanner: the synced copy's banner names config/AGENT-SYSTEM.md", "/config/AGENT-SYSTEM.md by " in synced, synced[:200])
+write(copy, synced.replace("/config/AGENT-SYSTEM.md by ", "/docs/AGENT-SYSTEM.md by ", 1))
+code, out = w.forge("uninstall", "--apply")
+check("a copy whose banner names docs/AGENT-SYSTEM.md is removed -- %s" % sandbox.tail(out, 3), not os.path.lexists(copy), out)
+
 # F11 and F17: ~/.cache/forge and ~/.local/state/forge as links are removed as links, their targets kept.
 # Red on 34c191b: 'OSError: Cannot call rmtree on a symbolic link', exit 1, the SessionStart row and the record left.
 w = World("symdirs")

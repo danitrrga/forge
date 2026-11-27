@@ -372,7 +372,8 @@ def _project_files(run, pp):
     if os.path.lexists(copy):
         n += 1
         try:
-            ours = not os.path.islink(copy) and lib.holds(copy, system_doc.GEN_BANNER + _read(system_doc.CANON))
+            text = _read(system_doc.CANON)
+            ours = not os.path.islink(copy) and any(lib.holds(copy, b + text) for b in system_doc.BANNERS)
         except (OSError, UnicodeDecodeError) as e:
             run.fail("%s left in place: %s cannot be read (%s), so the copy cannot be compared" % (lib.short(copy), lib.short(system_doc.CANON), e))
         else:

@@ -14,11 +14,16 @@ LEGACY = os.path.join(lib.ROOT, "docs", "AGENT-SYSTEM.md")
 _REL = "docs" if os.path.exists(LEGACY) and not os.path.exists(os.path.join(lib.ROOT, "config", "AGENT-SYSTEM.md")) else "config"
 CANON = os.path.join(lib.ROOT, _REL, "AGENT-SYSTEM.md")
 
-GEN_BANNER = (
-    "<!-- GENERATED — DO NOT EDIT. Synced from "
-    + ROOT_FS + "/" + _REL + "/AGENT-SYSTEM.md by "
-    "scripts/sync/sync_system_doc.py. Edit the canonical copy in forge. -->\n\n"
-)
+
+def _banner(rel):
+    return ("<!-- GENERATED — DO NOT EDIT. Synced from "
+            + ROOT_FS + "/" + rel + "/AGENT-SYSTEM.md by "
+            "scripts/sync/sync_system_doc.py. Edit the canonical copy in forge. -->\n\n")
+
+
+GEN_BANNER = _banner(_REL)
+# Both banners a copy forge wrote can carry: a frozen project is never re-synced, so its copy can still name the other folder.
+BANNERS = (_banner("config"), _banner("docs"))
 
 BEGIN = "<!-- BEGIN FORGE-SYSTEM-POINTER (managed by sync_system_doc.py) -->"
 END = "<!-- END FORGE-SYSTEM-POINTER -->"
