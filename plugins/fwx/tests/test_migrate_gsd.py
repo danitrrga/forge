@@ -420,8 +420,8 @@ s.ok("... and no phase is from_roadmap", dj2 is not None and not any(p["from_roa
 
 # ---- 6: scopes ------------------------------------------------------------------------------------------------------
 s.eq("scopes", d["scopes"], [{"src": ".planning", "dest": ".fwx"}, {"src": ".planning/workstreams/ws1", "dest": ".fwx/subprojects/ws1"}])
-act(".planning/workstreams/ws1/PROJECT.md", "keep", "project", ".fwx/subprojects/ws1/PROJECT.md")
-act(".planning/PROJECT.md", "keep", "project", ".fwx/PROJECT.md")
+act(".planning/workstreams/ws1/PROJECT.md", "keep", "project", ".fwx/subprojects/ws1/project.md")
+act(".planning/PROJECT.md", "keep", "project", ".fwx/project.md")
 act(".planning/workstreams/ws1/STATE.md", "purge", "machine-state")
 
 # ---- 7: backlog -----------------------------------------------------------------------------------------------------
@@ -707,11 +707,11 @@ refusal("apply with a staged change outside .planning/", wt, ["apply"], "not cle
 
 repo, wt = world()
 roots = (wt, os.path.join(repo, ".git"))
-helpers.write(wt, ".fwx/PROJECT.md", "mine\n")
-helpers.git(wt, "add", ".fwx/PROJECT.md")
-helpers.git(wt, "commit", "-q", "-m", "a .fwx/PROJECT.md of its own")
-r = refusal("apply with a destination that exists (.fwx/PROJECT.md)", wt, ["apply"], ".fwx/PROJECT.md exists", roots)
-with open(os.path.join(wt, ".fwx/PROJECT.md"), encoding="utf-8") as fh:
+helpers.write(wt, ".fwx/project.md", "mine\n")
+helpers.git(wt, "add", ".fwx/project.md")
+helpers.git(wt, "commit", "-q", "-m", "a .fwx/project.md of its own")
+r = refusal("apply with a destination that exists (.fwx/project.md)", wt, ["apply"], ".fwx/project.md exists", roots)
+with open(os.path.join(wt, ".fwx/project.md"), encoding="utf-8") as fh:
     s.eq("... destination existed and was overwritten", fh.read(), "mine\n")
 
 repo, wt = world()
@@ -1422,7 +1422,7 @@ for rel in (".planning/PROJECT.md", ".planning/knowledge/a.md", ".planning/phase
             ".planning/phases/03-c/purged.md"):
     wbytes(lrepo, rel, b"x\n")
 wbytes(lroot, "outside.txt", b"x\n")
-MAPPING = {".planning/PROJECT.md": ".fwx/PROJECT.md", ".planning/knowledge/a.md": ".fwx/knowledge/a.md",
+MAPPING = {".planning/PROJECT.md": ".fwx/project.md", ".planning/knowledge/a.md": ".fwx/knowledge/a.md",
            ".planning/phases/01-a/x.md": ".fwx/milestones/v1/phases/01-a/x.md",
            ".planning/phases/02-b/y.md": ".fwx/milestones/v1/phases/02-b/y.md"}     # 03-c holds only a file the conversion purges
 LINK_SRC, LINK_DEST = ".planning/phases/01-a/L", ".fwx/milestones/v1/phases/01-a/L"
@@ -2099,7 +2099,7 @@ s.eq("DTC-72 refs list a relative path that climbs to the root, with the real ne
       ("apps/web/src/e2e/a.spec.ts", 2, "../../../../.planning/REQUIREMENTS.md", "moved", "../../../../.fwx/milestones/v1/REQUIREMENTS.md"),
       ("apps/web/src/e2e/a.spec.ts", 5, "../../../../.planning/STATE.md", "purged", None),
       ("docs/vision.md", 1, "../.planning/REQUIREMENTS.md", "moved", "../.fwx/milestones/v1/REQUIREMENTS.md"),
-      ("docs/vision.md", 1, ".planning/PROJECT.md", "moved", ".fwx/PROJECT.md")])
+      ("docs/vision.md", 1, ".planning/PROJECT.md", "moved", ".fwx/project.md")])
 rr = run(wt, "apply", "--close", "1")
 s.eq("DTC-72 apply exits 0", rr.returncode, 0)
 base72 = helpers.git(wt, "rev-parse", "HEAD").strip()
@@ -2110,7 +2110,7 @@ s.eq("DTC-72 --rewrite changes each relative path to the new place of its file, 
      (rd(os.path.join(wt, "apps/web/src/e2e/a.spec.ts")), rd(os.path.join(wt, "docs/vision.md"))),
      (SPEC.replace("../../../../.planning/phases/01-alpha/01-CONTEXT.md", REL)
       .replace("../../../../.planning/REQUIREMENTS.md", "../../../../.fwx/milestones/v1/REQUIREMENTS.md"),
-      VISION.replace("](../.planning/REQUIREMENTS.md)", "](../.fwx/milestones/v1/REQUIREMENTS.md)").replace("](.planning/PROJECT.md)", "](.fwx/PROJECT.md)")))
+      VISION.replace("](../.planning/REQUIREMENTS.md)", "](../.fwx/milestones/v1/REQUIREMENTS.md)").replace("](.planning/PROJECT.md)", "](.fwx/project.md)")))
 helpers.git(wt, "reset", "-q", "--hard")
 r = run(wt, "refs", "--base", base72, "--prefix", "docs/vision.md")
 s.ok("DTC-72 --prefix changes `.planning` to the real new path after a `../` run too, and keeps the run",
@@ -2197,7 +2197,7 @@ DOC75 = ("state: .planning/STATE.md\nplan: .planning/phases/01-alpha/01-01-PLAN.
          "folder: .planning/phases/01-alpha/\ntool: .planning\nunknown: .planning/other.txt\nrel: ../.planning/PROJECT.md\n")
 DOC75_WANT = ("state: .planning/STATE.md\nplan: .planning/phases/01-alpha/01-01-PLAN.md\n"
               "context: .fwx/milestones/v1/phases/01-alpha/01-CONTEXT.md\nfolder: .fwx/milestones/v1/phases/01-alpha/\n"
-              "tool: .fwx\nunknown: .fwx/other.txt\nrel: ../.fwx/PROJECT.md\n")
+              "tool: .fwx\nunknown: .fwx/other.txt\nrel: ../.fwx/project.md\n")
 repo, wt = mini({"docs/guide.md": DOC75})
 rr = run(wt, "apply", "--close", "1")
 s.eq("DTC-75 apply exits 0", rr.returncode, 0)
