@@ -14,6 +14,8 @@ Controls on the finished module, each seen red in one edit:
       FAIL: good path 'milestones/v2/phases/01-x/01.1-sub/state.md' passes: got ['milestones/v2/phases/01-x/01.1-sub/state.md: state.md is kept only in a closed or cancelled phase; belongs in the phase, once it is closed or cancelled']
   - the factory key not exempt from the lower-case rule:
       FAIL: good path 'factory/K-1/plan.md' passes: got ['factory/K-1/plan.md: upper-case letter or space in a name; belongs in factory/k-1/plan.md']
+  - the key exempt only at index 1 and 3 (a nested subproject's job key lowered; CodeRabbit PR 279):
+      FAIL: good path 'subprojects/a/subprojects/b/factory/K-1/plan.md' passes: got ['subprojects/a/subprojects/b/factory/K-1/plan.md: upper-case letter or space in a name; belongs in subprojects/a/subprojects/b/factory/k-1/plan.md']
 """
 import os
 import subprocess
@@ -54,7 +56,7 @@ GOOD = [
     "project.md", "adr.tsv", "tree.excalidraw", "milestones/v2/milestone.md",
     "research/chart.png", "milestones/v2/phases/01-x/demo/3/index.html",
     "durable/x.md", "subprojects/a/project.md", "subprojects/a/milestones/v1/milestone.md",
-    "factory/K-1/plan.md", "subprojects/a/factory/K-1/plan.md",
+    "factory/K-1/plan.md", "subprojects/a/factory/K-1/plan.md", "subprojects/a/subprojects/b/factory/K-1/plan.md",
     "milestones/v2/phases/01-x/context.md", "milestones/v2/phases/01-x/decisions.tsv",
     "milestones/v2/phases/01-x/state.md", "milestones/v2/phases/01-x/report-1.md",
     "milestones/v2/phases/01-x/research/notes.md",
@@ -69,6 +71,7 @@ BAD = {
     "milestones/v2/phases/01-x/notes.md": "research",
     "research/subprojects/a/factory/UPPER.md": "research/subprojects/a/factory/upper.md",   # only `factory/<KEY>` at a scope root is exempt
     "factory/K 1/plan.md": "factory/K-1/plan.md",                                           # a space is refused in a key too
+    "subprojects/a/subprojects/b/factory/UPPER/Plan.md": "subprojects/a/subprojects/b/factory/UPPER/plan.md",   # only the key is exempt, at any depth
     "research": "research/research",                                                        # a bare file named like a folder
     "durable": "research/durable",
     "milestones/v2/phases/01-x/demo": "research/demo",

@@ -30,8 +30,11 @@ _REPORT = re.compile(r"report-\d+\.md\Z")
 
 
 def _exempt(parts, i):
-    """Whether component i is a factory job key: `factory/<KEY>` at the root of a scope."""
-    return (i == 1 and parts[0] == "factory") or (i == 3 and parts[0] == "subprojects" and parts[2] == "factory")
+    """Whether component i is a factory job key: `factory/<KEY>` at the root of a scope, however deep the subprojects nest."""
+    j = 0
+    while parts[j] == "subprojects" and j + 2 < len(parts):
+        j += 2
+    return i == j + 1 and parts[j] == "factory"
 
 
 def _lowered(parts):
