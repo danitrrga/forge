@@ -25,10 +25,6 @@ Controls, each seen red on lib/fwx/commands/state.py changed in one place (the f
   - cancel handed the parent folder (the CLI's wiring; the deletion itself is state.py's, seen red in test_state.py; 4 failed):
       FAIL: cancel: exit code: got 1, want 0
       FAIL: cancel: its folder is gone
-  - check ignores errors (4 failed):
-      FAIL: check report that does not cite the evidence sha: exit code: got 0, want 1
-  - check fails on a length warning (2 failed):
-      FAIL: check report that cites the sha but is long: only a warning: exit code: got 1, want 0
   - --adr writes decisions.tsv (4 failed):
       FAIL: decision --adr: stdout: got 'D3', want 'A1'
   - `use PHASE_DIR` does not take the subproject from the path (2 failed):
@@ -125,9 +121,9 @@ r = helpers.fwx(helpers.ROOT, "help")
 s.ok("bin/fwx help lists `fwx phase new`", re.search(r"^\s+fwx phase new\s+\S", r.stdout, re.M) is not None, r.stdout)
 
 repo = helpers.toy_repo()
-for label, args in (("no verb", ["state"]), ("an unknown verb", ["phase", "frobnicate"]), ("phase new without a slug", ["phase", "new"]),
+for label, args in (("no verb", ["phase"]), ("an unknown verb", ["phase", "frobnicate"]), ("phase new without a slug", ["phase", "new"]),
                     ("an unknown flag", ["session", "--nope"]), ("decision new without --why", ["decision", "new", "--decision", "x", "--support", "chosen"]),
-                    ("session attach with nothing", ["session", "attach"]), ("state lint without a path", ["state", "lint"]),
+                    ("session attach with nothing", ["session", "attach"]),
                     ("session attach with a phase and --root", ["session", "attach", "x", "--root"])):
     clean("usage: %s" % label, st(repo, *args), 2)
 s.eq("usage errors write nothing", tree(repo), ["README"])
@@ -141,8 +137,10 @@ phase1 = os.path.join(main, ".fwx", "milestones", "v1", "phases", "01-alpha")
 clean("new-phase from a linked worktree", r, 0, phase1)
 s.ok("new-phase from a worktree: the folder is in the main checkout", os.path.isdir(phase1))
 s.eq("new-phase from a worktree: nothing in the worktree", tree(wt), before_wt)
-s.ok("new-phase: PROJECT.md and the milestone are made", os.path.exists(os.path.join(main, ".fwx", "PROJECT.md"))
-     and os.path.exists(os.path.join(main, ".fwx", "milestones", "v1", "MILESTONE.md")))
+# The project and milestone files are lowercase. Seen red while the code wrote `PROJECT.md` and `MILESTONE.md`:
+#   FAIL: new-phase: project.md and the milestone are made   (likewise new-milestone, cancel and the 6 parallel ones)
+s.ok("new-phase: project.md and the milestone are made", os.path.exists(os.path.join(main, ".fwx", "project.md"))
+     and os.path.exists(os.path.join(main, ".fwx", "milestones", "v1", "milestone.md")))
 s.eq("new-phase: the phase folder holds context.md, decisions.tsv and audit.tsv",
      ls(phase1), ["audit.tsv", "context.md", "decisions.tsv"])
 # no base-context file is built with the phase any more. Seen red while it was built (the folder held the phase's file):
@@ -327,7 +325,7 @@ clean("new-subphase: the next M", st(sub, "subphase", "new", sphase, "next"), 0,
 clean("new-subphase on a folder that is not a phase", st(sub, "subphase", "new", sub, "x"), 1)
 clean("new-subphase with a bad slug", st(sub, "subphase", "new", sphase, "No Good"), 1)
 clean("new-milestone (the next number)", st(sub, "milestone", "new"), 0, os.path.join(sub, ".fwx", "milestones", "v2"))
-s.ok("new-milestone: MILESTONE.md", os.path.exists(os.path.join(sub, ".fwx", "milestones", "v2", "MILESTONE.md")))
+s.ok("new-milestone: milestone.md", os.path.exists(os.path.join(sub, ".fwx", "milestones", "v2", "milestone.md")))
 clean("new-milestone vN", st(sub, "milestone", "new", "v5", "--subproject", "web"), 0, os.path.join(sub, ".fwx", "subprojects", "web", "milestones", "v5"))
 clean("new-milestone that exists", st(sub, "milestone", "new", "v5", "--subproject", "web"), 1)
 clean("new-milestone with a bad name", st(sub, "milestone", "new", "x1"), 1)
@@ -348,8 +346,8 @@ st(c, "session", "attach", one, session="s-other")
 clean("cancel", st(c, "phase", "remove", one), 0)
 s.ok("cancel: its folder is gone", not os.path.exists(one))
 s.eq("cancel: the neighbour is intact", tree(two), two_before)
-s.ok("cancel: PROJECT.md and the milestone stay", os.path.exists(os.path.join(c, ".fwx", "PROJECT.md"))
-     and os.path.exists(os.path.join(c, ".fwx", "milestones", "v1", "MILESTONE.md")))
+s.ok("cancel: project.md and the milestone stay", os.path.exists(os.path.join(c, ".fwx", "project.md"))
+     and os.path.exists(os.path.join(c, ".fwx", "milestones", "v1", "milestone.md")))
 s.eq("cancel: the session that pointed at it is unbound", session_file(c, "s-other"), {"subproject": None, "phase_dir": None})
 s.eq("cancel: the other session keeps its phase", session_file(c, "s-c"), {"subproject": None, "phase_dir": ".fwx/milestones/v1/phases/02-two"})
 helpers.write(two, "premortem.md", "x\n")
@@ -364,36 +362,15 @@ for label, target in (("the milestones folder", os.path.join(c, ".fwx", "milesto
 s.ok("cancel of a wrong target deleted nothing", os.path.isdir(os.path.join(c, ".fwx", "milestones")) and os.path.exists(os.path.join(c, "README")))
 clean("cancel without an argument", st(c, "phase", "remove"), 2)
 
-# ---- check ----------------------------------------------------------------------------------------------------------
+# ---- the lint commands are gone ------------------------------------------------------------------------------------------
+# `state lint` and `report lint` left with the `state` agent: the orchestrator writes the report itself. Red before (they ran the check):
+#   FAIL: `fwx report lint` is gone: exit code: got 1, want 2
 k = helpers.mkdtemp("fwx-check-")
-sha = "c0ffee1" + "0" * 33
-report = os.path.join(k, "report-1.md")
 helpers.write(k, "report-1.md", "# Report 1\n\nDone.\n")
-r = st(k, "report", "lint", report, session="")  # outside a repository, but check reads only the files
-clean("check report with no audit.tsv", r, 1)
-audit(k, "evidence", "bin/fwx test", rc="0", sha=sha)
-r = st(k, "report", "lint", report)
-clean("check report that does not cite the evidence sha", r, 1)
-s.ok("check report: the message names the sha", sha[:7] in r.stderr, r.stderr)
-helpers.write(k, "report-1.md", "# Report 1\n\nEvidence: commit %s\n" % sha[:12])
-clean("check report that cites the sha", st(k, "report", "lint", report), 0)
-s.eq("check report: nothing to warn about, nothing printed besides ok", "WARN" in st(k, "report", "lint", report).stdout, False)
-helpers.write(k, "report-1.md", "# Report 1\n\nEvidence: commit %s\n" % sha[:12] + "line\n" * 50)
-r = st(k, "report", "lint", report)
-clean("check report that cites the sha but is long: only a warning", r, 0)
-s.ok("check report: the warning line", re.search(r"^WARN: 53 lines, target 40$", r.stdout, re.M) is not None, r.stdout)
-state_md = os.path.join(k, "state.md")
-helpers.write(k, "state.md", "line\n" * 112)
-r = st(k, "state", "lint", state_md)
-clean("check state of 112 lines: only a warning", r, 0)
-s.ok("check state: WARN: 112 lines, target 100", re.search(r"^WARN: 112 lines, target 100$", r.stdout, re.M) is not None, r.stdout)
-helpers.write(k, "state.md", "short\n")
-r = st(k, "state", "lint", state_md)
-clean("check state of a short file", r, 0)
-s.ok("check state of a short file: no warning", "WARN" not in r.stdout, r.stdout)
-helpers.write(k, "state.md", "")
-clean("check state of an empty file", st(k, "state", "lint", state_md), 1)
-clean("check state of a file that is not there", st(k, "state", "lint", os.path.join(k, "none.md")), 1)
+for obj in ("report", "state"):
+    r = st(k, obj, "lint", os.path.join(k, "report-1.md"))
+    s.eq("`fwx %s lint` is gone: exit code" % obj, r.returncode, 2)
+    s.eq("`fwx %s lint` is gone: it says so" % obj, (r.stderr.splitlines() or [""])[0], "fwx: unknown command: %s" % obj)
 
 # ---- a workspace whose code lives in nested repositories (`project.repos`): `fwx session --json` says where each part works --------
 # Seen red on the code before `part_repos` and `fwx_dir` existed:
@@ -521,8 +498,8 @@ s.eq("6 parallel first phase new: exit codes", [g[0] for g in got], [0] * 6)
 s.ok("6 parallel first phase new: no traceback", not any("Traceback" in g[2] for g in got), "".join(g[2] for g in got)[-300:])
 made = sorted(os.listdir(os.path.join(fresh, ".fwx", "milestones", "v1", "phases"))) if os.path.isdir(os.path.join(fresh, ".fwx", "milestones")) else []
 s.eq("6 parallel first phase new: six folders in v1", len(made), 6)
-s.ok("6 parallel first phase new: PROJECT.md and MILESTONE.md are there", os.path.exists(os.path.join(fresh, ".fwx", "PROJECT.md"))
-     and os.path.exists(os.path.join(fresh, ".fwx", "milestones", "v1", "MILESTONE.md")))
+s.ok("6 parallel first phase new: project.md and milestone.md are there", os.path.exists(os.path.join(fresh, ".fwx", "project.md"))
+     and os.path.exists(os.path.join(fresh, ".fwx", "milestones", "v1", "milestone.md")))
 
 # ---- outside a git repository: exit 2 -------------------------------------------------------------------------------
 nogit = helpers.mkdtemp_nogit()

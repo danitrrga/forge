@@ -104,14 +104,14 @@ CONFIG = {"schema": 1, "critique_rounds_unattended": 2,
                      "post-mortem": {"small": "haiku", "normal": "fable", "big": "opus"}}}
 
 
-def world(files=None, config=None, tracked=False):
+def world(files=None, config=None, tracked=False, project="PROJECT.md"):
     """A toy repo with a phase folder; returns (repo, phase dir)."""
     repo = helpers.toy_repo()
     helpers.write(repo, ".claude/fwx.json", json.dumps(config or CONFIG))
     ph = os.path.join(repo, ".fwx", "milestones", "v1", "phases", "01-thing")
     helpers.write(ph, "context.md", "# context\n")
     helpers.write(ph, "decisions.tsv", DECISIONS)
-    helpers.write(repo, ".fwx/PROJECT.md", "# project\n")
+    helpers.write(repo, ".fwx/" + project, "# project\n")
     for rel, text in (files or {}).items():
         helpers.write(ph, rel, text)
     if tracked:
@@ -319,6 +319,18 @@ for step, out_file in (("premortem", "premortem.md"), ("plan", "plan.md"), ("pos
              "decisions.tsv, 4 decisions in force: chosen 1, approved 1, unexamined 1, agent-assumption 1." in t, t)
         s.ok("brief %s %s: names the agent-assumption and unexamined ids" % (step, flags), "agent-assumption: D3." in t and "unexamined: D4." in t, t)
         s.ok("brief %s %s: the superseded D1 is not counted" % (step, flags), "D1" not in (re.search(r"decisions\.tsv, [^\n]*\n[^\n]*\n[^\n]*", t) or re.search("D1", "D1")).group(0), t)
+
+# the project file is `project.md`, or `PROJECT.md` in a project not yet renamed (the toy above is the upper-case one)
+# Seen red before the lookup (the lowercase toy's brief lists no project file; Linux is case-sensitive):
+#   FAIL: brief lowercase project file: names project.md by its absolute path
+lrepo, lph = world({"premortem.md": premortem("objections"), "plan.md": good_plan(), "postmortem.md": postmortem("objections")}, project="project.md")
+rows(lrepo, lph, "premortem", "planning", "postmortem")
+t = brief("lowercase project file", lrepo, lph, "premortem").stdout
+lp = os.path.join(lrepo, ".fwx", "project.md")
+s.ok("brief lowercase project file: names project.md by its absolute path", "- project.md: %s" % lp in t, t)
+s.ok("brief lowercase project file: no PROJECT.md line", "PROJECT.md" not in t, t)
+t = brief("upper-case project file", repo, ph, "premortem").stdout
+s.ok("brief upper-case project file: names PROJECT.md, not project.md", "- PROJECT.md: %s" % common["PROJECT.md"] in t and "- project.md:" not in t, t)
 
 # the files of each step
 t = brief("premortem files", repo, ph, "premortem").stdout

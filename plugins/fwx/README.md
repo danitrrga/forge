@@ -14,9 +14,7 @@ python3 bin/fwx statusline    # the status-bar line
 python3 bin/fwx phase new <slug>    # the next phase folder, the session bound to it; `phase list` shows them, `phase remove <dir>` deletes one whose discuss was cancelled; `session attach <phase dir>` binds the session to one
 python3 bin/fwx subphase new <phase dir> <slug>    # the next subphase folder of a phase
 python3 bin/fwx milestone new [vN]    # the next milestone of a scope
-python3 bin/fwx decision new --decision T --why T --support S    # a row in the phase's decisions.tsv (`--adr`: the scope's adr.tsv); `decision list` reads them, `--grep TEXT` and `--all`
-python3 bin/fwx state lint <state.md>    # a state.md against its rules; exit 1 on an error
-python3 bin/fwx report lint <report.md>    # a phase report against its rules, the same way
+python3 bin/fwx decision new --decision T --why T --support S    # a row in the phase's decisions.tsv (`--adr`: the scope's adr.tsv)
 python3 bin/fwx session    # the session's phase; `fwx --help` lists every command, grouped by object
 python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it
 python3 bin/fwx rounds <dir>    # rounds a job has used of its cap; --use "<why>" spends one, --reset "<why>" restarts the count
@@ -50,6 +48,8 @@ process may use, at most 8; `--jobs 1` is one file after another); the lines and
 file's output is shown whole. `python3 bin/forge test` with no group runs forge's own tests and leaves this suite out. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
 docstring line is its help, and there is no list to edit.
 
+The owner opens a piece of work himself with `/fwx:recall`, pstack's recall skill (`skills/recall/SKILL.md`, owner-only: `disable-model-invocation: true`): it rebuilds where the work stands from `.fwx/`, git and `gh` and hands back a short brief. It never starts or binds a session. Its source and the passages adapted are named in its header and in `NOTICE`.
+
 ## Agents
 
 Each agent gets, by path in its brief, only what its job needs; nothing is injected into every agent. A critic or a reviewer gets files, never the author's reasoning. The agent files are `agents/<role>.md`; the fixer and the conflict resolver are modes of the executor, chosen by the brief.
@@ -70,7 +70,6 @@ Each agent gets, by path in its brief, only what its job needs; nothing is injec
 | `ui-walker` | the `ui-walk` skill | one tramo of screens, its axis (`breaker` or `critic`), the session and the command to drive the browser; for the critic, each screen's approved reference; no code |
 | `ui-verifier` | the `ui-walk` skill | the mode (`tramos` or `verify`), the plan, the walkers' findings or the base commit, and the phase's `demo/` folder |
 | `skill-proposer` | the `session` skill | `context.md`, `decisions.tsv`, `plan.md`, the phase branch and the base commit |
-| `state` | the `session` skill | the phase's `context.md`, `decisions.tsv`, `plan.md`, the state and report templates and the run to read |
 
 ## Orca plugin
 

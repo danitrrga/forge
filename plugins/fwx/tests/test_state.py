@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lib/fwx/state.py, the core: where `.fwx/` is, its subproject, milestone, phase and subphase folders, the session
+r"""lib/fwx/state.py, the core: where `.fwx/` is, its subproject, milestone, phase and subphase folders, the session
 file, and the TSV writers (decisions and the single writer of audit.tsv).
 
 Seen red before state.py existed (the file was not there):
@@ -81,6 +81,7 @@ Controls, each seen red on a copy with state.py (or a template) changed in one p
 import json
 import os
 import re
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -231,15 +232,12 @@ s.eq("subphases of a phase with none", state.subphases(mk(pdir, "12.3-c")), [])
 # ---- phase_paths ------------------------------------------------------------------------------------------------------
 pp = state.phase_paths(x)
 s.eq("phase_paths keys", sorted(pp), sorted(["context", "decisions", "research", "demo", "premortem", "plan", "postmortem",
-                                              "state", "audit", "next_report"]))
+                                              "audit"]))
 s.eq("phase_paths names", {k: os.path.basename(str(v)) for k, v in pp.items()},
      {"context": "context.md", "decisions": "decisions.tsv", "research": "research", "demo": "demo",
-      "premortem": "premortem.md", "plan": "plan.md", "postmortem": "postmortem.md", "state": "state.md",
-      "audit": "audit.tsv", "next_report": "report-1.md"})
+      "premortem": "premortem.md", "plan": "plan.md", "postmortem": "postmortem.md",
+      "audit": "audit.tsv"})
 s.ok("phase_paths values are Paths inside the folder", all(os.path.dirname(str(v)) == x for v in pp.values()))
-helpers.write(x, "report-1.md", "r\n")
-helpers.write(x, "report-3.md", "r\n")
-s.eq("next_report is the first free number", os.path.basename(str(state.phase_paths(x)["next_report"])), "report-2.md")
 s.ok("phase_paths creates nothing", not os.path.exists(os.path.join(x, "context.md")))
 
 # ---- append_row / read_rows, the cell cleaning ----------------------------------------------------------------------
@@ -443,7 +441,8 @@ state.append_audit(b, "stage", "closed", sha="abc1234")
 r2 = state.resolve(cwd=rw, session="r1")
 s.eq("resolve without a binding returns the only open phase", (r2["phase_dir"], r2["candidates"]), (c, [c]))
 s.eq("resolve writes nothing: the session is still unbound", state.read_session(cwd=rm, session="r1"), None)
-s.eq("resolve paths are those of the phase", r2["paths"].get("state"), os.path.join(c, "state.md"))
+s.eq("resolve paths are those of the phase", r2["paths"].get("audit"), os.path.join(c, "audit.tsv"))
+s.ok("resolve paths have no state.md and no next report", not {"state", "next_report"} & set(r2["paths"]), str(sorted(r2["paths"])))
 s.eq("resolve: no subphases yet", r2["subphases"], [])
 mk(c, "02.1-sub")
 s.eq("resolve lists the subphases of the open phase", state.resolve(cwd=rw, session="r1")["subphases"], [os.path.join(c, "02.1-sub")])
@@ -482,8 +481,8 @@ os.environ.pop("CLAUDE_CODE_SESSION_ID")
 fr = os.path.join(nm, ".fwx")
 s.eq("new_phase in an empty repo: the folder is <main>/.fwx/milestones/v1/phases/01-a", str(p1),
      os.path.join(fr, "milestones", "v1", "phases", "01-a"))
-s.ok("new_phase: .fwx/PROJECT.md is created from the template", os.path.isfile(os.path.join(fr, "PROJECT.md")))
-s.ok("new_phase: milestones/v1/MILESTONE.md is created", os.path.isfile(os.path.join(fr, "milestones", "v1", "MILESTONE.md")))
+s.ok("new_phase: .fwx/project.md is created from the template", os.path.isfile(os.path.join(fr, "project.md")))
+s.ok("new_phase: milestones/v1/milestone.md is created", os.path.isfile(os.path.join(fr, "milestones", "v1", "milestone.md")))
 s.ok("new_phase: context.md is copied", os.path.isfile(os.path.join(str(p1), "context.md")))
 for f, head in HEADERS.items():
     s.eq("new_phase: %s holds exactly its header" % f, read(os.path.join(str(p1), f)).decode(), head)
@@ -497,7 +496,7 @@ s.eq("new_phase: the folder name of context.md is filled in", [l for l in read(o
 for f in ("context.md",):
     first = read(os.path.join(str(p1), f)).decode().splitlines()[0]
     s.ok("a copied template loses its leading referent comment line (%s)" % f, "referent" not in first and "copied-from" not in first, first)
-s.ok("PROJECT.md loses its leading referent comment line", "<!-- referent" not in read(os.path.join(fr, "PROJECT.md")).decode())
+s.ok("project.md loses its leading referent comment line", "<!-- referent" not in read(os.path.join(fr, "project.md")).decode())
 
 # a number that is already taken is skipped, never shared. Two seams stand in for the two ways it happens: a listing gone
 # stale (`_next_number`), and a rival that creates the folder between the free-number look and the mkdir (`_number_taken`).
@@ -558,9 +557,20 @@ mm = helpers.toy_repo()
 mroot = state.scope_root(os.path.join(mm, ".fwx"))
 m1 = state.new_milestone(mroot)
 s.eq("new_milestone in an empty scope is v1", str(m1), os.path.join(mm, ".fwx", "milestones", "v1"))
-s.ok("new_milestone writes MILESTONE.md from the template", os.path.isfile(os.path.join(str(m1), "MILESTONE.md")))
-s.ok("MILESTONE.md carries its own name and loses the referent line", "# Milestone v1:" in read(os.path.join(str(m1), "MILESTONE.md")).decode()
-     and "<!-- referent" not in read(os.path.join(str(m1), "MILESTONE.md")).decode())
+s.ok("new_milestone writes milestone.md from the template", os.path.isfile(os.path.join(str(m1), "milestone.md")))
+s.ok("milestone.md carries its own name and loses the referent line", "# Milestone v1:" in read(os.path.join(str(m1), "milestone.md")).decode()
+     and "<!-- referent" not in read(os.path.join(str(m1), "milestone.md")).decode())
+# project_file / milestone_file: the lowercase file, else the upper-case one, else the lowercase path for a writer
+# Seen red with the lookup returning the lowercase path always: FAIL: project_file finds the upper-case PROJECT.md of a project not yet renamed
+lk = helpers.toy_repo({".fwx/PROJECT.md": "# up\n", ".fwx/milestones/v1/MILESTONE.md": "# up\n", ".fwx/subprojects/a/project.md": "# low\n",
+                       ".fwx/subprojects/a/PROJECT.md": "# both\n"})
+s.eq("project_file finds the upper-case PROJECT.md of a project not yet renamed", state.project_file(os.path.join(lk, ".fwx")), Path(lk) / ".fwx" / "PROJECT.md")
+s.eq("milestone_file finds the upper-case MILESTONE.md", state.milestone_file(os.path.join(lk, ".fwx", "milestones", "v1")),
+     Path(lk) / ".fwx" / "milestones" / "v1" / "MILESTONE.md")
+s.eq("project_file prefers project.md when both are there", state.project_file(os.path.join(lk, ".fwx", "subprojects", "a")),
+     Path(lk) / ".fwx" / "subprojects" / "a" / "project.md")
+s.eq("project_file of a folder with neither is the lowercase path", state.project_file(os.path.join(lk, ".fwx", "subprojects", "b")),
+     Path(lk) / ".fwx" / "subprojects" / "b" / "project.md")
 mk(mm, ".fwx", "milestones", "v9")
 s.eq("new_milestone: the next one follows the highest (v9 -> v10)", os.path.basename(str(state.new_milestone(mroot))), "v10")
 s.eq("new_milestone with a name", os.path.basename(str(state.new_milestone(mroot, "v12"))), "v12")
@@ -636,54 +646,18 @@ cs = state.new_phase("w", subproject="web", cwd=cm)
 state.cancel_phase(cs)
 s.ok("cancel_phase works inside a subproject", not os.path.exists(str(cs)) and os.path.isdir(os.path.join(cm, ".fwx", "subprojects", "web")))
 
-# ---- check_state -------------------------------------------------------------------------------------------------------
-kd = helpers.mkdtemp("fwx-check-")
-helpers.write(kd, "state.md", "# State\n" + "line\n" * 99)  # 100 lines
-s.eq("check_state: 100 lines is on target", state.check_state(os.path.join(kd, "state.md")), ([], []))
-helpers.write(kd, "state.md", "# State\n" + "line\n" * 111)  # 112 lines
-s.eq("check_state: 112 lines warns, no error", state.check_state(os.path.join(kd, "state.md")), ([], ["112 lines, target 100"]))
-errs, _ = state.check_state(os.path.join(kd, "missing.md"))
-s.ok("check_state: a missing file is an error", len(errs) == 1 and "missing.md" in errs[0], str(errs))
-helpers.write(kd, "empty.md", "\n\n")
-s.ok("check_state: an empty state.md is an error", len(state.check_state(os.path.join(kd, "empty.md"))[0]) == 1)
-
-# ---- check_report ------------------------------------------------------------------------------------------------------
-rd = helpers.mkdtemp("fwx-report-")
-SHA = "0123456789abcdef0123456789abcdef01234567"
-state.append_audit(rd, "evidence", "old run", rc=0, sha="f" * 40)
-state.append_audit(rd, "evidence", "pytest -q", rc=0, sha=SHA)
-state.append_audit(rd, "round", "review")
-report = os.path.join(rd, "report-1.md")
-helpers.write(rd, "report-1.md", "# Report 1\n\n## Evidence\nCommit `%s`, pytest -q, exit 0.\n" % SHA)
-s.eq("check_report: the full sha of the last evidence row passes", state.check_report(report), ([], []))
-helpers.write(rd, "report-1.md", "# Report 1\n\n## Evidence\nCommit `%s`, pytest -q, exit 0.\n" % SHA[:7])
-s.eq("check_report: an abbreviated sha (7 chars) passes", state.check_report(report), ([], []))
-helpers.write(rd, "report-1.md", "# Report 1\n\n## Evidence\nCommit `%s`, an older run.\n" % ("f" * 40))
-errs, warns = state.check_report(report)
-s.ok("check_report: the sha of an older evidence row is not the last one (report without evidence sha passed)", len(errs) == 1 and "0123456" in errs[0], str(errs))
-helpers.write(rd, "report-1.md", "# Report 1\n\nDone.\n")
-errs, warns = state.check_report(report)
-s.ok("check_report: a report without the evidence sha is an error (report without evidence sha passed)", len(errs) == 1, str(errs))
-helpers.write(rd, "report-1.md", "# Report\n" + "Commit %s\n" % SHA + "line\n" * 39)  # 41 lines
-s.eq("check_report: 41 lines is a warning, not an error", state.check_report(report), ([], ["41 lines, target 40"]))
-helpers.write(rd, "report-1.md", "# Report\n" + "Commit %s\n" % SHA + "line\n" * 38)  # 40 lines
-s.eq("check_report: 40 lines is on target", state.check_report(report), ([], []))
-nr = helpers.mkdtemp("fwx-noaudit-")
-helpers.write(nr, "report-1.md", "# Report\nCommit %s\n" % SHA)
-s.ok("check_report: no audit.tsv, so no evidence to cite: an error", len(state.check_report(os.path.join(nr, "report-1.md"))[0]) == 1)
-state.append_audit(nr, "round", "review")
-s.ok("check_report: audit.tsv with no evidence row: an error", len(state.check_report(os.path.join(nr, "report-1.md"))[0]) == 1)
-s.ok("check_report: a missing report is an error", len(state.check_report(os.path.join(nr, "report-9.md"))[0]) == 1)
-state.append_audit(rd, "evidence", "later", rc=1, sha="b" * 40)
-helpers.write(rd, "report-1.md", "# Report\nCommit %s\n" % SHA)
-s.ok("check_report: a newer evidence row makes the old sha stale", len(state.check_report(report)[0]) == 1)
+# ---- the lint of state.md and of a report is gone ---------------------------------------------------------------------------
+# The orchestrator writes the report itself, so no file is linted. Red before: `state.check_state` and `state.check_report` existed.
+s.ok("state.py has no check_state, check_report, STATE_LINES or REPORT_LINES",
+     not any(hasattr(state, n) for n in ("check_state", "check_report", "STATE_LINES", "REPORT_LINES", "_length_warning")),
+     "present: %s" % [n for n in ("check_state", "check_report", "STATE_LINES", "REPORT_LINES", "_length_warning") if hasattr(state, n)])
 
 # ---- the templates ------------------------------------------------------------------------------------------------------
 state._read_template = _real_read_template
 for name in sorted(set(read_templates)):
     s.ok("the template %s that state.py copies exists in templates/" % name, os.path.isfile(os.path.join(TEMPLATES, name)), name)
 s.eq("the templates copied by new_phase, new_subphase and new_milestone", sorted(set(read_templates)),
-     ["MILESTONE.md", "PROJECT.md", "phase/context.md", "phase/plan.md"])
+     ["milestone.md", "phase/context.md", "phase/plan.md", "project.md"])
 SECTIONS = {"premortem.md": ["## Verdict", "## Failure reasons", "## Size"],
             "plan.md": ["## Goal", "## Approach", "## Size"],
             "postmortem.md": ["## Verdict", "## Findings", "## Criteria", "## Checked", "## Needs from the owner before executing",

@@ -993,13 +993,12 @@ def settings_cases(tmp):
     want("examples/forge.json has a framework section", isinstance(fw, dict), True)
     fw = fw if isinstance(fw, dict) else {}
     seed = {r: {z: "sonnet" for z in ("small", "normal", "big")} for r in (
-        "orchestrator", "researcher", "decisions", "state", "demo", "pre-mortem", "planner", "post-mortem", "executor",
+        "orchestrator", "researcher", "decisions", "demo", "pre-mortem", "planner", "post-mortem", "executor",
         "reviewer", "review-verifier", "security-reviewer", "ui-walker", "ui-verifier", "skill-proposer",
         "factory-orchestrator", "intake", "classifier", "detector", "analytics-verifier", "vision", "runner")}
     seed["planner"] = {z: "opus" for z in seed["planner"]}
     seed["detector"] = {z: "haiku" for z in seed["detector"]}
     seed["decisions"] = {z: "haiku" for z in seed["decisions"]}
-    seed["state"] = {z: "haiku" for z in seed["state"]}
     seed["runner"] = {z: "haiku" for z in seed["runner"]}
     seed["ui-walker"]["small"] = "haiku"
     seed["analytics-verifier"]["big"] = "opus"
@@ -1020,7 +1019,7 @@ def settings_cases(tmp):
 
 def main():
     # The world's forge.json is the toy all-on fixture, never this checkout's config/forge.json: a
-    # stranger's engine copy has none. Red there before (M1, docs/archive/audits/portable-measure.md):
+    # stranger's engine copy has none. Red there before (M1, in the data history: docs/archive/audits/portable-measure.md):
     # "FileNotFoundError: .../config/forge.json" from settings_cases' read of it.
     lib.SETTINGS = os.path.join(FIXTURES, "forge.json")
     lib.settings.cache_clear()

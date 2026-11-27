@@ -34,8 +34,6 @@ SUPPORT = ("chosen", "approved", "unexamined", "agent-assumption")
 AUDIT_COLUMNS = ("date", "kind", "sha", "detail", "rc")
 AUDIT_KINDS = ("evidence", "stage", "round")
 CLOSED_STAGES = ("closed", "cancelled")
-STATE_LINES = 100   # state.md: the length of GSD's template; over it only warns
-REPORT_LINES = 40   # a phase report: one terminal screen; over it only warns
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _MILESTONE = re.compile(r"v(\d+)\Z")
@@ -148,15 +146,28 @@ def subphases(phase_dir):
 
 
 def phase_paths(dir):
-    """The files of a phase, a subphase or any working folder (also `factory/<KEY>/`), as Paths. Nothing is created;
-    `next_report` is `report-<n>.md` with the first free n."""
+    """The files of a phase, a subphase or any working folder (also `factory/<KEY>/`), as Paths. Nothing is created."""
     d = Path(dir)
-    n = 1
-    while (d / ("report-%d.md" % n)).exists():
-        n += 1
     return {"context": d / "context.md", "decisions": d / "decisions.tsv", "research": d / "research", "demo": d / "demo",
             "premortem": d / "premortem.md", "plan": d / "plan.md", "postmortem": d / "postmortem.md",
-            "state": d / "state.md", "audit": d / "audit.tsv", "next_report": d / ("report-%d.md" % n)}
+            "audit": d / "audit.tsv"}
+
+
+def _doc(folder, stem):
+    """`folder/<stem>.md`, or `folder/<STEM>.md` when only the upper-case file is there (a project not yet renamed); else
+    the lowercase path, where a writer puts it."""
+    low, up = Path(folder) / (stem + ".md"), Path(folder) / (stem.upper() + ".md")
+    return up if not low.exists() and up.exists() else low
+
+
+def project_file(root):
+    """The project document of a `.fwx/` root or a subproject folder: `project.md`, else `PROJECT.md`."""
+    return _doc(root, "project")
+
+
+def milestone_file(milestone_dir):
+    """The document of a `milestones/vN/` folder: `milestone.md`, else `MILESTONE.md`."""
+    return _doc(milestone_dir, "milestone")
 
 
 def last_stage(dir):
@@ -397,72 +408,6 @@ def append_decision(path, *, decision, why, support, rejected="", source="", sup
     return new_id
 
 
-def read_decision_rows(path):
-    """The rows of a decisions.tsv or an adr.tsv; [] when the file is missing or empty. A header that is not
-    DECISION_COLUMNS is refused (`append_row` refuses it too), so a read never takes another table for a decision log."""
-    try:
-        with open(str(path), encoding="utf-8", newline="") as f:
-            first = f.readline().rstrip("\r\n")
-    except FileNotFoundError:
-        return []
-    except OSError as e:
-        raise StateError("%s cannot be read (%s)" % (path, e.strerror))
-    if first and first != "\t".join(DECISION_COLUMNS):
-        raise StateError("%s has the header %r, not %r" % (path, first, "\t".join(DECISION_COLUMNS)))
-    return read_rows(path)
-
-
-def decisions_in_force(rows):
-    """Every row of a decision log as a copy with `in_force` and `superseded_by` added: a row is in force when no other
-    row names its id in `supersedes`, so in a chain A <- B <- C only C is. `superseded_by` is the id of the row that
-    replaced it ("" when in force; the last one written when two rows replace the same id, and then both stay in force).
-    Refused with a StateError, and nothing returned: an id that appears twice, a `supersedes` naming an id no row has,
-    a `supersedes` that loops back on itself."""
-    seen, by = set(), {}
-    for r in rows:
-        if r.get("id", "") in seen:
-            raise StateError("the id %s appears twice" % r.get("id", ""))
-        seen.add(r.get("id", ""))
-    for r in rows:
-        old = r.get("supersedes", "")
-        if old:
-            if old not in seen:
-                raise StateError("%s supersedes %r: no such id in this file" % (r.get("id", ""), old))
-            by[old] = r["id"]
-    for start in by:
-        walked, i = [], start
-        while i in by:
-            if i in walked:
-                raise StateError("supersedes loops back on itself through %s" % i)
-            walked.append(i)
-            i = by[i]
-    return [dict(r, in_force=r.get("id", "") not in by, superseded_by=by.get(r.get("id", ""), "")) for r in rows]
-
-
-def decision_matches(row, terms):
-    """Whether every term (case-insensitive) is in the row's decision, why, rejected or source text."""
-    text = "\n".join(str(row.get(k, "")) for k in ("decision", "why", "rejected", "source")).lower()
-    return all(str(t).lower() in text for t in terms)
-
-
-def decisions_for_topic(rows, terms):
-    """The rows of `decisions_in_force` output that touch a topic, as the rows in force today: a row matching every term
-    is itself when in force, else the row at the end of its chain, once however many rows of the chain match. Each
-    result is a copy with `matched_superseded`, the ids of the superseded rows that matched. Order of first match."""
-    by_id = {r["id"]: r for r in rows}
-    found = {}
-    for r in rows:
-        if not decision_matches(r, terms):
-            continue
-        end = r
-        while end["superseded_by"]:
-            end = by_id[end["superseded_by"]]
-        hit = found.setdefault(end["id"], dict(end, matched_superseded=[]))
-        if r is not end:
-            hit["matched_superseded"].append(r["id"])
-    return list(found.values())
-
-
 def append_audit(dir, kind, detail="", rc="", sha=None, cwd=None):
     """Add a row to `<dir>/audit.tsv`: the one writer of that file. `kind` is in AUDIT_KINDS. A `stage` row's detail starts
     with the target stage (`^[a-z][a-z-]*$`; whether the transition is legal is for the caller to check) and, with no `sha`,
@@ -565,12 +510,12 @@ def _check_phase_dir(phase_dir, what):
 
 
 def new_milestone(scope, name=None):
-    """Make `<scope>/milestones/vN/` with its MILESTONE.md and return it. `name` is `vN`, default the next number after
+    """Make `<scope>/milestones/vN/` with its milestone.md and return it. `name` is `vN`, default the next number after
     the highest (v1 in an empty scope); one that exists is refused. `scope` is `.fwx` or `.fwx/subprojects/<name>`."""
     scope = _check_scope(scope)
     if name is not None and not _MILESTONE.match(name):
         raise StateError("bad milestone name %r: vN" % (name,))
-    text = _read_template("MILESTONE.md")
+    text = _read_template("milestone.md")
     if name is None:
         name = "v%d" % (max((int(m[1:]) for m in milestones(scope)), default=0) + 1)
     d = scope / "milestones" / name
@@ -579,14 +524,14 @@ def new_milestone(scope, name=None):
         os.mkdir(str(d))
     except FileExistsError:
         raise StateError("milestone %s already exists in %s" % (name, scope))
-    _write_new(d / "MILESTONE.md", text.replace("<vN>", name))
+    _write_new(d / "milestone.md", text.replace("<vN>", name))
     return d
 
 
 def new_phase(slug, subproject=None, milestone=None, cwd=None, session=None):
     """Make the next phase folder `NN-slug` of the scope's milestone, with `context.md` and the headers of
     `decisions.tsv` and `audit.tsv`, and bind the session to it (when there is a session id). Returns the folder.
-    Missing pieces are made: `.fwx/` with PROJECT.md, the subproject folder, milestone v1. The scope is `subproject`, or
+    Missing pieces are made: `.fwx/` with project.md, the subproject folder, milestone v1. The scope is `subproject`, or
     else the one the session is bound to, or else the root: a forgotten argument never drops a session out of its
     subproject. `milestone` defaults to the highest and must exist."""
     _check_slug(slug)
@@ -597,13 +542,13 @@ def new_phase(slug, subproject=None, milestone=None, cwd=None, session=None):
         subproject = bound["subproject"]
     root = plan_root(cwd)
     scope = scope_root(root, subproject)
-    texts = {n: _read_template(n) for n in ("PROJECT.md", "MILESTONE.md", "phase/context.md")}  # all of them, before any folder
+    texts = {n: _read_template(n) for n in ("project.md", "milestone.md", "phase/context.md")}  # all of them, before any folder
     try:
         os.makedirs(str(root))
-    except FileExistsError:  # another session made `.fwx/` first and writes PROJECT.md
+    except FileExistsError:  # another session made `.fwx/` first and writes project.md
         pass
     else:
-        _write_new(root / "PROJECT.md", texts["PROJECT.md"])
+        _write_new(root / "project.md", texts["project.md"])
     m = milestone or current_milestone(scope)
     if m is None:
         try:
@@ -665,46 +610,3 @@ def cancel_phase(phase_dir):
             continue
         if isinstance(data, dict) and data.get("phase_dir") == stored:
             _put_session(sessions, n[:-5], data.get("subproject"), None)
-
-
-def _length_warning(lines, target):
-    return ["%d lines, target %d" % (lines, target)] if lines > target else []
-
-
-def _read_text(path):
-    try:
-        with open(str(path), encoding="utf-8") as f:
-            return f.read(), None
-    except OSError as e:
-        return None, "%s cannot be read (%s)" % (path, e.strerror)
-
-
-def check_state(path):
-    """`(errors, warnings)` of a `state.md`: a file that is missing or empty is an error; more than STATE_LINES lines is
-    a warning only (short is wanted, but a long file is not refused)."""
-    text, err = _read_text(path)
-    if err:
-        return [err], []
-    if not text.strip():
-        return ["%s is empty" % path], []
-    return [], _length_warning(len(text.splitlines()), STATE_LINES)
-
-
-def check_report(path):
-    """`(errors, warnings)` of a phase report: an error when it does not cite the sha of the last `evidence` row of the
-    `audit.tsv` next to it (the full sha, or an abbreviation of 7 or more hex digits), or when that file has no such row;
-    more than REPORT_LINES lines is a warning only."""
-    text, err = _read_text(path)
-    if err:
-        return [err], []
-    rows = [r for r in read_rows(os.path.join(os.path.dirname(os.path.abspath(str(path))), "audit.tsv")) if r.get("kind") == "evidence"]
-    errors = []
-    if not rows:
-        errors.append("%s: audit.tsv has no evidence row, so the report has no evidence to cite" % path)
-    else:
-        sha = rows[-1].get("sha", "")
-        cited = bool(sha) and (sha in text or any(sha.lower().startswith(t.lower())
-                                                  for t in re.findall(r"\b[0-9A-Fa-f]{7,40}\b", text)))
-        if not cited:
-            errors.append("%s does not cite the sha of the last evidence row (%s)" % (path, sha[:12] or "empty"))
-    return errors, _length_warning(len(text.splitlines()), REPORT_LINES)

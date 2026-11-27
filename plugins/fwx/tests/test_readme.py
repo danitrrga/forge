@@ -290,12 +290,13 @@ def agent_rows(readme):
 
 def agents_problems(readme, agents=os.path.join(helpers.ROOT, "agents")):
     """What `## Agents` lacks: the section, a row for each file of agents/ plus the fixer and the resolver (modes of the executor, with
-    no file of their own), or a row with an empty cell. The table names the roles only: what each brief holds is the brief builders' own."""
+    no file of their own), a row with no such file, or a row with an empty cell. The table names the roles only: what each brief holds is the brief builders' own."""
     if agents_section(readme) is None:
         return ["README.md has no `## Agents` section"]
     wanted = sorted({f[:-3] for f in os.listdir(agents) if f.endswith(".md")} | {"fixer", "resolver"})
     rows = agent_rows(readme)
     out = ["no row for `%s`" % w for w in wanted if w not in rows]
+    out += ["`%s` has a row but no agent file" % r for r in rows if r not in wanted]
     out += ["`%s` has an empty cell" % r for r, cells in rows.items() if not all(cells)]
     return out
 
@@ -306,9 +307,12 @@ got = agents_problems(real)
 s.ok("README.md has `## Agents` naming every agent file, the fixer and the resolver" + (" -> " + "; ".join(got) if got else ""), not got)
 s.ok("`## Agents` reads the rows of the table", len(agent_rows(real)) >= 13, "%d rows" % len(agent_rows(real)))
 s.ok("control without the section: fails", agents_problems(real.replace("## Agents\n", "## Others\n", 1)) == ["README.md has no `## Agents` section"])
-for role in ("planner", "state", "fixer", "resolver"):
+for role in ("planner", "fixer", "resolver"):
     s.ok("control without the row of `%s`: fails" % role,
          agents_problems(re.sub(r"^\| `%s` \|.*\n" % role, "", real, flags=re.M)) == ["no row for `%s`" % role])
+# Seen red at 1b09126, where the state agent's file was gone and its row stayed: the row was not flagged (the check returned [])
+s.ok("control a row for an agent with no file: fails",
+     agents_problems(real.replace("\n## Orca plugin", "| `ghost` | nobody | nothing |\n\n## Orca plugin", 1)) == ["`ghost` has a row but no agent file"])
 s.ok("control a row with an empty brief cell: fails",
      agents_problems(re.sub(r"^(\| `reviewer` \|[^|]*\|)[^|]*\|", r"\1  |", real, count=1, flags=re.M)) == ["`reviewer` has an empty cell"])
 toy_agents = os.path.join(toy, "agents")

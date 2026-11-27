@@ -16,13 +16,13 @@ No check enforces these; they are a convention.
 | talk | pink | `orchestrator`, `demo` |
 | research | cyan | `researcher`, `intake`, `classifier` |
 | critique | yellow | `pre-mortem`, `post-mortem` |
-| plan | purple | `planner`, `decisions`, `state`, `factory-orchestrator` |
+| plan | purple | `planner`, `decisions`, `factory-orchestrator` |
 | execute | green | `executor`, `runner` |
 | review | red | `reviewer`, `review-verifier`, `security-reviewer` |
 | UI | blue | `ui-walker`, `ui-verifier`, `vision` |
 | improve | orange | `skill-proposer`, `detector`, `analytics-verifier` |
 
-These are all 22 roles of `ROLES` in `lib/fwx/config.py`. `decisions` and `state` sit in the plan family because they write the records the plan rests on; `factory-orchestrator` sits there because it runs the loop with no owner to talk to, so it never takes pink. A new role gets a family before it gets a file, and a ninth family needs a ninth colour, which does not exist: fold it into an existing family.
+These are all 21 roles of `ROLES` in `lib/fwx/config.py`. `decisions` sits in the plan family because it writes the records the plan rests on; `factory-orchestrator` sits there because it runs the loop with no owner to talk to, so it never takes pink. A new role gets a family before it gets a file, and a ninth family needs a ninth colour, which does not exist: fold it into an existing family.
 
 A workflow's `agent()` call shows its colour only when it names the agent definition with `agentType`. Without it the row has a label and no colour.
 

@@ -156,7 +156,8 @@ def _exists(p):
 def _common(d, paths):
     """What every agent of the phase is pointed at, as absolute paths that exist."""
     root = state.plan_root(d)
-    found = [("PROJECT.md", root / "PROJECT.md"), ("durable/", root / "durable"), ("context.md", paths["context"]),
+    project = state.project_file(root)
+    found = [(project.name, project), ("durable/", root / "durable"), ("context.md", paths["context"]),
              ("decisions.tsv", paths["decisions"]), ("research/", paths["research"]), ("demo/", paths["demo"]),
              (".claude/fwx.json", os.path.join(config.main_checkout(d), config.FILE))]
     return ["- %s: %s" % (name, p) for name, p in found if _exists(p)]

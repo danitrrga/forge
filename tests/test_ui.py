@@ -496,7 +496,7 @@ want("components: the band kinds draw their own surface and icon role",
      [(k, components.band(ctx, k, "m")[0].bg, components.band(ctx, k, "m")[0].spans[1].role) for k in components.BAND],
      [("refused", "warn_band", "warn"), ("broken", "error_band", "error"), ("frozen", "neutral_band", "ink"), ("stale", "neutral_band", "ink"), ("done", "ok_band", "ok")])
 want("components: a band with no action ends in padding to the width", components.band(ctx, "done", "m")[0].width, 80)
-want("components: every agent has a family", sorted(components.FAMILY), sorted(["executor", "planner", "pre-mortem", "post-mortem", "reviewer", "security-reviewer", "review-verifier", "ui-walker", "ui-verifier", "researcher", "state", "decisions", "demo", "skill-proposer"]))
+want("components: every agent has a family", sorted(components.FAMILY), sorted(["executor", "planner", "pre-mortem", "post-mortem", "reviewer", "security-reviewer", "review-verifier", "ui-walker", "ui-verifier", "researcher", "decisions", "demo", "skill-proposer"]))
 want("components: the dot is always mute and its shape follows the family",
      [(components.agent_block(ctx, "t", [(a, "", "", ("running", "r"))])[1].spans[3].role, components.agent_block(ctx, "t", [(a, "", "", ("running", "r"))])[1].spans[3].text) for a in ("executor", "planner", "reviewer", "researcher")],
      [("mute", "\u25c6"), ("mute", "\u25c7"), ("mute", "\u25cf"), ("mute", "\u25cb")])
