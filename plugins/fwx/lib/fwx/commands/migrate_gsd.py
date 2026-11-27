@@ -734,7 +734,7 @@ class Mapper:
         sc, head = self.scopes[None], SCOPE_DEST
         if len(parts) >= 2 and parts[0] == "workstreams":
             sc, head, parts = self.scopes.get(parts[1]), "%s/subprojects/%s" % (SCOPE_DEST, parts[1]), parts[2:]
-        tail = parts
+        tail = ["project.md"] if parts == ["PROJECT.md"] else parts    # the scope's project document is written lowercase (classify_tracked)
         if self.is_backlog(sc, parts):
             tail = ["backlog"] + parts
         elif parts and parts[0] == "phases":

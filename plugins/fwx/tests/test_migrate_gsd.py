@@ -1685,6 +1685,16 @@ r = run(wt, "refs", "--base", base4, "--prefix", ".gitignore")
 s.eq("D4 refs --prefix on the root .gitignore leaves the handled line alone (no second twin, no rewrite of the old line)",
      (r.returncode, rd(os.path.join(wt, ".gitignore"))), (0, WSIGN + "/.fwx/subprojects/*/private/\n"))
 
+# a .gitignore line naming the project document: the migrated file is `project.md` (classify_tracked lowers it), so the twin names that
+# (CodeRabbit PR 279: the twin kept `PROJECT.md`, which names no file on a case-sensitive filesystem and left the migrated file unignored.
+# Failed before the fix: "FAIL: D4 ... the twins name project.md ...: got '...\n/.fwx/subprojects/*/PROJECT.md\n...\n/.fwx/PROJECT.md\n'")
+PSIGN = "/.planning/workstreams/*/PROJECT.md\n/.planning/PROJECT.md\n"
+repo, wt = mini({".gitignore": PSIGN, ".planning/workstreams/ws1/PROJECT.md": "# W\n"})
+r = run(wt, "apply", "--close", "1")
+s.eq("D4 apply exits 0 with a .gitignore that names PROJECT.md", r.returncode, 0)
+s.eq("D4 ... the twins name project.md, the file apply moved them to",
+     rd(os.path.join(wt, ".gitignore")), "/.planning/workstreams/*/PROJECT.md\n/.fwx/subprojects/*/project.md\n/.planning/PROJECT.md\n/.fwx/project.md\n")
+
 # ---- D5: apply --close on a phase whose only content is its ROADMAP entry keeps its folder, its entry and its closing row ----------------
 repo, wt = mini()
 r = run(wt, "apply", "--close", "2")
