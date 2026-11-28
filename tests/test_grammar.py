@@ -190,6 +190,27 @@ try:
     check("(e) the refused sync left toy-b's settings.local.json missing (it would regenerate it)", not os.path.exists(slp("toy-b")))
     forge("sync", "--all", "--apply")  # put it back for what follows
 
+    # (f) `sync --apply` with no NAME and no --all is refused (Linear DTC-131): it wrote every project's settings.local.json
+    # and the user-scope files, and agents ran it by mistake four times. A dry-run with no scope stays allowed. Red on
+    # 73eb6a9 (4 of 67 checks FAILED): "(f) sync --apply: refused, exit 2 and the message -- got 0: = toy-a up to date |
+    # = toy-b up to date | 0 change(s) applied." and "(f) sync --apply: nothing changed -- changed: ['home', 'toy-b']"
+    # (toy-b's deleted file came back). Control: --all still writes it.
+    os.remove(slp("toy-b"))
+    snap = {n: tree(n) for n in projects}, tree_of(home)
+    code, out = forge("sync", "--apply")
+    now = {n: tree(n) for n in projects}, tree_of(home)
+    check("(f) sync --apply: refused, exit 2 and the message", code == 2 and "! forge sync: --apply needs a project NAME or --all" in out,
+          "got %d: %s" % (code, tail(out)))
+    check("(f) sync --apply: nothing ran", "== forge:" not in out, tail(out))
+    check("(f) sync --apply: nothing changed", snap == now, "changed: %s" % sorted(
+        [n for n in projects if snap[0][n] != now[0][n]] + (["home"] if snap[1] != now[1] else [])))
+    check("(f) sync --apply left toy-b's settings.local.json missing (else nothing was looked at)", not os.path.exists(slp("toy-b")))
+    code, out = forge("sync")
+    check("(f) a bare dry-run still works: exit 0 and a generator ran", code == 0 and "== forge:" in out, "got %d: %s" % (code, tail(out)))
+    code, out = forge("sync", "--apply", "--all")
+    check("(f) sync --apply --all still writes: exit 0 and toy-b's file is back", code == 0 and os.path.isfile(slp("toy-b")),
+          "got %d: %s" % (code, tail(out)))
+
     # ------------------------------------------------------------- uninstall
     code, out = forge("uninstall", "--project", "toy-a")
     check("(c) uninstall --project toy-a: (exit, 'forge uninstall toy-a' in output)", (code, "forge uninstall toy-a" in out) == (2, True),
