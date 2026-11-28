@@ -708,6 +708,36 @@ def case_routes(R, S):
     S.ok("the reviewer's brief says `.fwx/` files are not reviewable", "not reviewable" in text, text[-500:])
 
 
+def case_uncommittable(R, S):
+    """A finding on a file no commit of the worktree can carry (git-ignored and untracked, or outside the worktree: `~/...`, `../x`, `/abs`) goes to
+    `consider` and counts nothing towards the verifier threshold, as one under `.fwx/` does; a tracked file, and a file that does not exist yet,
+    are still fixed. The `where` of an `outside` item is judged as the reviewer wrote it: its `file` has lost the leading `/` and the `..`.
+    Seen red against the code before `_uncommittable` (5 FAILs, among them):
+      FAIL: 3 uncommittable findings and a tracked one: no verifier, the tracked one is fixed -> next verify: want next 'fix', got 'verify'
+      FAIL: uncommittable outside items are listed, the finding is fixed: got ([], []), want (['r1-F1'], ['r1-O1', 'r1-O2', 'r1-O3', 'r1-O4'])
+      FAIL: a pass of one ignored-file finding is done, listed: got ('fix', ['r1-F1'], []), want ('done', [], ['r1-F1'])"""
+    W = World()
+    W.review(R)
+    bad = ["config/forge.json", "~/.claude/settings.json", "../outside.py"]
+    r, v = W.find(R, W.reply("r1", [finding("F%d" % i, file=f) for i, f in enumerate(bad, 1)] + [finding("F4")]))
+    nxt(S, "3 uncommittable findings and a tracked one: no verifier, the tracked one is fixed", v, "fix")
+    S.eq("uncommittable findings are listed, the tracked one is fixed", (v.get("ids"), [c["id"] for c in v.get("consider") or []]), (["r1-F4"], ["r1-F1", "r1-F2", "r1-F3"]))
+    W = World()
+    W.review(R)
+    wh = ["config/forge.json:2", "~/.claude/settings.json:5", "../outside.py:3", "/etc/hosts:1"]
+    r, v = W.find(R, W.reply("r1", [finding("F1")], out=[outside(where=w) for w in wh]))
+    nxt(S, "4 uncommittable outside items and a tracked finding: no verifier, the finding is fixed", v, "fix")
+    S.eq("uncommittable outside items are listed, the finding is fixed", (v.get("ids"), [c["id"] for c in v.get("consider") or []]), (["r1-F1"], ["r1-O1", "r1-O2", "r1-O3", "r1-O4"]))
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1", file="src/new.py"), finding("F2", file="src/a.py")]))
+    S.eq("a file that does not exist yet is fixed, like a tracked one", (v.get("next"), v.get("ids")), ("fix", ["r1-F1", "r1-F2"]))
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1", file="config/forge.json")]))
+    S.eq("a pass of one ignored-file finding is done, listed", (v.get("next"), v.get("ids"), [c["id"] for c in v.get("consider") or []]), ("done", [], ["r1-F1"]))
+
+
 def case_goal_and_ui(R, S):
     """The reviewer's brief gives the phase goal (the Intent of context.md) and, for a part with a UI task, the paths under `Approved UI`;
     a part with no UI task gets no such section (context.md criterion 2).
@@ -727,13 +757,13 @@ def case_goal_and_ui(R, S):
         S.ok("%s: the security reviewer's brief has neither" % label, "Ship the one-home rule" not in sec and "APPROVED UI" not in sec, sec[:400])
 
 
-CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry, case_recorded, case_routes, case_goal_and_ui]
+CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry, case_recorded, case_routes, case_uncommittable, case_goal_and_ui]
 V_ = "lib/fwx/execute/review.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [
     ("the verifier runs on any item (the rule at d348f8d)", case_threshold, V_, "THRESHOLD = 3\n", "THRESHOLD = 0\n",
      "3 findings go to the fixer -> next verify"),
-    ("the verifier runs from three items", case_threshold, V_, "if sum(not _under_fwx(i) for i in items) > THRESHOLD:", "if sum(not _under_fwx(i) for i in items) >= THRESHOLD:",
+    ("the verifier runs from three items", case_threshold, V_, "if sum(not _uncommittable(top, i, outside_of) for i in items) > THRESHOLD:", "if sum(not _uncommittable(top, i, outside_of) for i in items) >= THRESHOLD:",
      "3 findings go to the fixer -> next verify"),
     ("the verifier runs from five items", case_threshold, V_, "THRESHOLD = 3\n", "THRESHOLD = 4\n",
      "4 findings go to the verifier -> next fix"),
