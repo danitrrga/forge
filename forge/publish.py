@@ -143,12 +143,30 @@ def main_checkout(root):
     return None if os.path.realpath(main) == os.path.realpath(root) else main
 
 
+def is_linked_worktree(root):
+    """True when `root`'s git dir is not the repository's common git dir. False for a plain checkout and when
+    git cannot say."""
+    try:
+        d = [subprocess.run(["git", "-C", root, "rev-parse", flag], capture_output=True, text=True)
+             for flag in ("--git-dir", "--git-common-dir")]
+    except OSError:
+        return False
+    if any(r.returncode or not r.stdout.strip() for r in d):
+        return False
+    a, b = (os.path.realpath(os.path.join(root, r.stdout.strip())) for r in d)
+    return a != b
+
+
 def load_deny(root):
     """The private list as [(line number, compiled pattern)], None when the file is not there. A linked
     worktree has no private files of its own, so it reads the main checkout's."""
     p = os.path.join(root, DENY)
     if not os.path.exists(p):
         main = main_checkout(root)
+        if main is None and is_linked_worktree(root):
+            raise CheckError("%s is a linked worktree whose main checkout cannot be found (a checkout made with "
+                             "`git init --separate-git-dir` leaves no record of it), so the private list cannot be "
+                             "read: run the check from the main checkout" % root)
         p = os.path.join(main, DENY) if main else p
     if not os.path.exists(p):
         return None
