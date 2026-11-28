@@ -119,27 +119,45 @@ def public_hits(line):
     return out
 
 
+# What a git hook exports and a git call with -C must not inherit: git would take them over the -C repository.
+GIT_LOCATION_ENV = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_NAMESPACE",
+                    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+
+
 def main_checkout(root):
-    """The main working tree of the repository `root` is a linked worktree of, else None. The common git dir's
-    `core.worktree` names it when set (a submodule's git dir under .git/modules, a clone made with
-    --separate-git-dir); otherwise the parent of a common dir called `.git`. Git records nothing else: after
-    `git init --separate-git-dir` the main tree is known only to the `.git` file inside it, and `git worktree list`
-    then reports the git dir itself as the main tree, so that layout is not found (None)."""
+    """The main working tree of the repository `root` is a linked worktree of, else None (`root` is not a linked
+    worktree, or the repository is bare and has no main tree). The common git dir's `core.worktree` names it
+    when set (a submodule's git dir under .git/modules); otherwise the parent of a common dir called `.git`.
+    Git records nothing else: after `git init --separate-git-dir` the main tree is known only to the `.git`
+    file inside it, and `git worktree list` then reports the git dir itself as the main tree. A linked worktree
+    of that layout cannot find its main tree and so cannot read the private list: that raises CheckError, never
+    a None the caller would take for "no private list". The inherited GIT_DIR and friends (a git hook sets
+    them) would make git ignore -C, so they are taken out of the environment."""
+    env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION_ENV}
     try:
-        r = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"], capture_output=True, text=True)
-        common = os.path.abspath(os.path.join(root, r.stdout.strip())) if r.returncode == 0 and r.stdout.strip() else ""
-        wt = subprocess.run(["git", "config", "--file", os.path.join(common, "config"), "--get", "core.worktree"],
-                            capture_output=True, text=True) if common else None
+        r = subprocess.run(["git", "-C", root, "rev-parse", "--git-dir", "--git-common-dir"],
+                           capture_output=True, text=True, env=env)
+        lines = r.stdout.split("\n") if r.returncode == 0 else []
+        if len(lines) < 2 or not lines[0] or not lines[1]:
+            return None
+        gitdir, common = (os.path.abspath(os.path.join(root, x)) for x in lines[:2])
+        if os.path.realpath(gitdir) == os.path.realpath(common):
+            return None
+        cfg = ["git", "config", "--file", os.path.join(common, "config")]
+        bare = subprocess.run(cfg + ["--bool", "--get", "core.bare"], capture_output=True, text=True, env=env).stdout.strip()
+        wt = subprocess.run(cfg + ["--get", "core.worktree"], capture_output=True, text=True, env=env).stdout.strip()
     except OSError:
         return None
-    if not common:
+    if bare == "true":  # --bool turns yes, on and 1 into true
         return None
-    if wt is not None and wt.returncode == 0 and wt.stdout.strip():
-        main = os.path.abspath(os.path.join(common, wt.stdout.strip()))
+    if wt:
+        main = os.path.abspath(os.path.join(common, wt))
     elif os.path.basename(common) == ".git":
         main = os.path.dirname(common)
     else:
-        return None
+        raise CheckError("%s is a linked worktree whose main checkout cannot be found (a checkout made with "
+                         "`git init --separate-git-dir` leaves no record of it), so the private list cannot be "
+                         "read: run the check from the main checkout" % root)
     return None if os.path.realpath(main) == os.path.realpath(root) else main
 
 

@@ -890,9 +890,9 @@ def worktree_layout_cases():
     check-public: 1 file(s) checked (public list)'". A deny file that is not UTF-8 was exit 1 with a
     UnicodeDecodeError traceback, one with `a{` and a 20-digit count exit 1 with an OverflowError traceback;
     both want exit 2.
-    Not covered, because git cannot answer it: after `git init --separate-git-dir` neither the git dir nor its
-    config names the main tree (no core.worktree; `git worktree list` reports the git dir itself as the main
-    tree), so a linked worktree of such a checkout cannot find the main's list."""
+    After `git init --separate-git-dir` neither the git dir nor its config names the main tree (no core.worktree;
+    `git worktree list` reports the git dir itself as the main tree), so a linked worktree of such a checkout
+    cannot find the main's list: the check refuses (E1-1)."""
     word = j("secret", "-word")
 
     def check_message(tree, text):
@@ -928,6 +928,81 @@ def worktree_layout_cases():
     code, out = check_message(tree, "a %s inside" % word)
     want("submodule layout, linked worktree = exit", code, 1)
     has("submodule layout, linked worktree", out, "[private list]")
+
+    # E1-1: a linked worktree of a --separate-git-dir checkout cannot find the main tree, so it cannot read the
+    # private list. Red before the fix, quoted: "separate-git-dir layout, linked worktree, a private word = exit
+    # = 0, want 2" and "...: output lacks 'main checkout', got 'PASS lint: 1 file(s) checked (public list)\n'"
+    # (the same message FAILs in the main checkout, exit 1). It must fail closed: exit 2 (CheckError) naming the
+    # problem, never the public list.
+    main = toy("sep-main")
+    write(main, "config/publish-deny.txt", word + "\n")
+    commit_base(main)
+    gd = os.path.join(TMP, "sep-gd-%d" % _n[0])
+    git_out(main, "init", "-q", "--separate-git-dir", gd)
+    code, out = check_message(main, "a %s inside" % word)
+    want("separate-git-dir layout, the main checkout = exit", code, 1)
+    has("separate-git-dir layout, the main checkout", out, "[private list]")
+    tree = os.path.join(TMP, "linked-%d" % _n[0])
+    git_out(main, "worktree", "add", "-q", "-b", "wt", tree)
+    for label, text in (("a private word", "a %s inside" % word), ("a clean message", "clean")):
+        code, out = check_message(tree, text)
+        want("separate-git-dir layout, linked worktree, %s = exit" % label, code, 2)
+        has("separate-git-dir layout, linked worktree, %s" % label, out, "main checkout", "run the check from the main checkout")
+        lacks("separate-git-dir layout, linked worktree, %s" % label, out, "PASS")
+
+    # control: a worktree whose main checkout is found, and has no list, stays the public list
+    main = toy("nolist-main")
+    commit_base(main)
+    tree = os.path.join(TMP, "linked-%d" % _n[0])
+    git_out(main, "worktree", "add", "-q", "-b", "wt", tree)
+    code, out = check_message(tree, "clean")
+    want("linked worktree, main found without a list = exit", code, 0)
+    has("linked worktree, main found without a list", out, "PASS lint", "(public list)")
+
+    # control: a linked worktree of a standard bare clone has no main checkout to read and no list: still the
+    # public list (a CheckError here would ask for a main checkout that does not exist)
+    src = toy("bare-src")
+    commit_base(src)
+    bare = os.path.join(TMP, "bare-%d.git" % _n[0])
+    git_out(src, "clone", "-q", "--bare", src, bare)
+    tree = os.path.join(TMP, "linked-%d" % _n[0])
+    git_out(bare, "worktree", "add", "-q", tree, "master")
+    code, out = check_message(tree, "clean")
+    want("bare clone, linked worktree = exit", code, 0)
+    has("bare clone, linked worktree", out, "PASS lint", "(public list)")
+
+    # core.bare is a git boolean: `yes` is as true as `true` (red before --bool: "bare clone with core.bare=yes,
+    # linked worktree = exit = 2, want 0")
+    git_out(bare, "config", "core.bare", "yes")
+    code, out = check_message(tree, "clean")
+    want("bare clone with core.bare=yes, linked worktree = exit", code, 0)
+    has("bare clone with core.bare=yes, linked worktree", out, "PASS lint", "(public list)")
+
+    # E1-1, inherited GIT_DIR: a git hook of one repo exports GIT_DIR and friends, and git then ignores -C. A
+    # plain checkout with no list, checked from such a hook, is still the public list. Red with the first fix
+    # (exit 2 on the rev-parse of the leaked git dir): "inherited GIT_DIR, plain checkout = exit = 2, want 0"
+    # and "output lacks '(public list)', got 'forge lint: ... linked worktree whose main checkout cannot be found'".
+    other = toy("leak-other")
+    write(other, "config/publish-deny.txt", word + "\n")
+    commit_base(other)
+    git_out(other, "init", "-q", "--separate-git-dir", os.path.join(TMP, "leak-gd-%d" % _n[0]))
+    other_tree = os.path.join(TMP, "linked-%d" % _n[0])
+    git_out(other, "worktree", "add", "-q", "-b", "wt", other_tree)
+    plain = toy("leak-plain")
+    commit_base(plain)
+    write(plain, "msg.txt", "clean\n")
+    leaked = dict(ENV, GIT_DIR=git_out(other_tree, "rev-parse", "--absolute-git-dir"), GIT_WORK_TREE=other_tree)
+    code, out = run([sys.executable, os.path.join(plain, "bin", "forge"), "lint", "--message", os.path.join(plain, "msg.txt")],
+                    plain, env=leaked)
+    want("inherited GIT_DIR, plain checkout = exit", code, 0)
+    has("inherited GIT_DIR, plain checkout", out, "(public list)")
+
+    # control: a stranger's checkout with no data at all (not a worktree) stays the public list
+    main = toy("stranger")
+    commit_base(main)
+    code, out = check_message(main, "clean")
+    want("no list, not a worktree = exit", code, 0)
+    has("no list, not a worktree", out, "(public list)")
 
     # E1-3: an invalid list is exit 2 with the file named, never a traceback
     for label, raw, needles in (("not UTF-8", b"ok\n\xff\xfe\n", ("publish-deny.txt",)),
