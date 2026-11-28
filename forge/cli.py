@@ -334,7 +334,7 @@ def guard_config_error(name):
 # timeout or async, so `forge sync --apply` alone does not mend it (found with Codex: "type":
 # "prompt" and "timeout": 0 both passed this row).
 NOT_CANONICAL = ("; an entry with the canonical command but another type, timeout or key is kept by forge sync, "
-                 "so delete it by hand from settings.local.json and run forge sync --apply")
+                 "so delete it by hand from settings.local.json and run forge sync --apply NAME")
 
 
 def guard_hook_entries(hooks, script):
@@ -749,7 +749,7 @@ def consent_row():
         cfg = guard.consent_config(lib.ROOT)
     except Exception as e:
         return fail("%s -- fix config/gateway.json (examples/gateway.json is the template: cp examples/gateway.json config/gateway.json), "
-                    "or set integrations.consent false and run forge sync --apply" % e)
+                    "or set integrations.consent false and run forge sync --apply --all" % e)
     adapter, limit = cfg["adapter"], cfg["timeout_s"]
     if not os.path.isfile(adapter) or not os.access(adapter, os.X_OK):
         return fail("the adapter %s is %s -- restore it (git checkout scripts/consent/) and chmod +x it, or point consent.adapter in %s at one that is"
@@ -773,15 +773,15 @@ def consent_row():
         return fail("%s is unreadable, so the --consent entry was not looked for: %s" % (where, e))
     entries = [e for e in lib.hook_entries(doc)[0] if CONSENT_MARKER in str(e[3].get("command"))] if doc is not None else []
     if not entries:
-        return fail("%s holds no `%s` entry, so the window is not wired -- forge sync --apply" % (where, CONSENT_MARKER))
+        return fail("%s holds no `%s` entry, so the window is not wired -- forge sync --apply --all" % (where, CONSENT_MARKER))
     for event, _, _, hook in entries:
         if hook.get("onFailure") != "block":
             return fail('the %s entry under %s has onFailure %s, want "block": a hook that hangs or breaks would let the call through '
-                        "-- forge sync --apply" % (CONSENT_MARKER, event, json.dumps(hook.get("onFailure"))))
+                        "-- forge sync --apply --all" % (CONSENT_MARKER, event, json.dumps(hook.get("onFailure"))))
     command, cap = entries[0][3].get("command"), entries[0][3].get("timeout")
     if isinstance(cap, bool) or not isinstance(cap, int) or limit >= cap:
         return fail("consent.timeout_s is %d and the hook entry's timeout is %s: the adapter must give up before the hook is killed, so "
-                    "timeout_s must be below it -- lower timeout_s in %s, or forge sync --apply to restore the entry's 300"
+                    "timeout_s must be below it -- lower timeout_s in %s, or forge sync --apply --all to restore the entry's 300"
                     % (limit, json.dumps(cap), lib.short(gateway)))
     branch_project = next((p for p in declared if p["production"].get("branches")), None)
     if branch_project:
@@ -795,7 +795,7 @@ def consent_row():
     for text, code, marker in ((CONSENT_SMOKE_BENIGN, 0, None), (push, 2, "CONSENT_UNATTENDED:")):
         why = consent_probe(command, cwd, text, cap, code, marker)
         if why:
-            return fail("the installed command `%s` fails its smoke test: %s -- forge sync --apply; if the entry is right, "
+            return fail("the installed command `%s` fails its smoke test: %s -- forge sync --apply --all; if the entry is right, "
                         "hooks/guard_tool_use.py --consent itself does not answer" % (command, why))
     return lib.Result("PASS", "consent", "adapter %s, timeout_s %d below the hook's %d s, %d project(s) with production, `%s` exits 0 and "
                       "`%s` exits 2 with CONSENT_UNATTENDED: through `%s`" % (lib.short(adapter), limit, cap, len(declared),
@@ -863,7 +863,7 @@ def owned_row():
     it, and each file that is gone or cannot be read, as file and `at` only, never a value. A record with no
     claim (every writer's rows are gone) is a SKIP, not a PASS over nothing."""
     if not os.path.exists(owned.path()):
-        return lib.Result("SKIP", "owned", NOT_ARMED + "no ownership record yet (%s): it is written by the first forge sync --apply"
+        return lib.Result("SKIP", "owned", NOT_ARMED + "no ownership record yet (%s): it is written by the first forge sync --apply --all"
                           % lib.short(owned.path()))
     claims, warn = owned.load()
     if warn:
@@ -985,17 +985,17 @@ CHECKS = [
     ("project roots", nested_project_roots, "git init in the nested project's directory and ignore it from the outer repository: an outer project's skill overrides switch the inner project's skills off, and an inner 'on' does not win (skills/new-project makes every project its own repository)"),
     ("frozen drift", frozen_drift, "forge writes nothing there, and Claude Code rewrites the file itself (approvals, permissions); lift `frozen` in the project file to bring it back to the generator's output"),
     ("instruction files", instruction_file_blocks, "forge never writes in a project: the change is in that project's repo"),
-    ("command guard", command_guard_smoke, "forge sync --apply; if the entry is there, hooks/guard_tool_use.py itself does not refuse"),
-    ("worktree guard", worktree_guard_smoke, "forge sync --apply; if the entry is there, hooks/worktree_guard.py itself does not refuse"),
+    ("command guard", command_guard_smoke, "forge sync --apply NAME; if the entry is there, hooks/guard_tool_use.py itself does not refuse"),
+    ("worktree guard", worktree_guard_smoke, "forge sync --apply NAME; if the entry is there, hooks/worktree_guard.py itself does not refuse"),
     ("ponytail", ponytail_row, "the project's hooks run hooks/ponytail_subagent.py once under SubagentStart and once under UserPromptSubmit (and once under SessionStart for the reviewer workers of `fwx wave run`); a probe that fails names Ponytail's install (claude plugin install ponytail@ponytail)"),
     ("memory", ["scripts/sync/memory_doctor.py"], "python3 scripts/sync/memory_doctor.py --verbose"),
     ("toolchain", toolchain.row, "forge toolchain --fix (writes mise's forge.toml, installs what is missing; a pip version that differs is only reported)"),
-    ("owned", owned_row, "forge sync --apply rewrites the record from what forge writes (an entry changed by hand is left alone, or repaired when its row still exists)"),
+    ("owned", owned_row, "forge sync --apply --all rewrites the record from what forge writes (an entry changed by hand is left alone, or repaired when its row still exists)"),
     # Its failures carry their own fix, so the row's is empty.
     ("integrations", integrations_row, ""),
     # Its failures carry their own fix, so the row's is empty.
     ("consent", consent_row, ""),
-    ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
+    ("codex hooks", codex_hooks_row, "forge sync --apply --all brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
     # Its failures carry their own fix, so the row's is empty.
     ("framework ignore", framework_ignore_row, ""),
     # Its detail names the unset fields, so the row's fix is empty.
@@ -1191,6 +1191,11 @@ def cmd_sync(a):
     """forge sync [NAME | --all] [--apply]. A NAME no project has is refused here, before any generator runs: only some
     generators refuse a name they do not know, so without this a misspelling would run the others for nothing.
     A project that cannot be read is let through: the generators name it ('! could not read')."""
+    if a.apply and not a.project and not a.all:
+        # No scope would write every project and the user-scope files; agents did it by mistake. The session-start hook
+        # runs the generators directly (not through here), so it is unaffected.
+        print("! forge sync: --apply needs a project NAME or --all (--all writes every project and the user-scope files)")
+        return 2
     if a.project:
         skipped = []
         known = lib.projects(skipped)
@@ -2023,10 +2028,10 @@ def build_parser():
     p = argparse.ArgumentParser(prog="forge", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("sync", help="regenerate every project's config")
-    s.add_argument("--apply", action="store_true", help="write; without it, only show what would change")
+    s.add_argument("--apply", action="store_true", help="write (needs NAME or --all); without it, only show what would change")
     scope = s.add_mutually_exclusive_group()
     scope.add_argument("project", nargs="?", help="this project only, no user-scope files")
-    scope.add_argument("--all", action="store_true", help="every project, even inside a session")
+    scope.add_argument("--all", action="store_true", help="every project and the user-scope files, even inside a session")
     s.set_defaults(fn=cmd_sync)
     k = sub.add_parser("skills", help="the online skills and the skill links (a dry-run unless --apply)")
     k.add_argument("--apply", action="store_true", help="write")

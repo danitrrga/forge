@@ -38,19 +38,19 @@ change), then with `--apply`, and restart the affected session.
 
 | Goal | Edit | Then run |
 |---|---|---|
-| Give a project an MCP server | add the server to `config/mcp-registry.json` if it is new, and list it in the project file under `servers` | `python3 bin/forge sync --apply` |
-| Add or rotate a secret | `credentials/secrets.json` (git-ignored, the only place a real token lives; `config/secrets.json` links to it). The registry refers to it as `${VAR}` | `python3 bin/forge sync --apply` |
-| Keep a skill or a plugin in a project | add its name to the project's `skills_keep` or `plugins_keep` | `python3 bin/forge sync --apply` |
+| Give a project an MCP server | add the server to `config/mcp-registry.json` if it is new, and list it in the project file under `servers` | `python3 bin/forge sync --apply NAME` |
+| Add or rotate a secret | `credentials/secrets.json` (git-ignored, the only place a real token lives; `config/secrets.json` links to it). The registry refers to it as `${VAR}` | `python3 bin/forge sync --apply --all` |
+| Keep a skill or a plugin in a project | add its name to the project's `skills_keep` or `plugins_keep` | `python3 bin/forge sync --apply NAME` |
 | Add a managed project | `python3 bin/forge new <path>`, which writes `config/projects/<name>.claude.json` | (`new` runs the sync for it) |
-| Add or edit a skill | `skills/<name>/SKILL.md` in forge; forge links it into `~/.claude/skills` | `python3 bin/forge sync --apply` |
-| Add a skill to one project only | `<project>/.claude/skills/<name>/SKILL.md`. Claude Code reads it directly; for Codex forge mirrors it into `<project>/.agents/skills/<name>` | `python3 bin/forge sync --apply` |
+| Add or edit a skill | `skills/<name>/SKILL.md` in forge; forge links it into `~/.claude/skills` | `python3 bin/forge sync --apply --all` |
+| Add a skill to one project only | `<project>/.claude/skills/<name>/SKILL.md`. Claude Code reads it directly; for Codex forge mirrors it into `<project>/.agents/skills/<name>` | `python3 bin/forge sync --apply NAME` |
 | Add a hook for every session | a row in `user_hooks` in `config/forge.json` (forge writes `~/.claude/settings.json`, and `~/.codex/hooks.json` for a row that lists `codex` while `codex_harness` is true) | `python3 bin/forge sync --apply --all` |
 | Add a hook for one project | the project's own `.claude/settings.json`, which forge never touches; use an absolute path and the interpreter for the file (`python3`, `node`, `bash`) | restart the session |
 | Switch an integration on or off | `integrations` in `config/forge.json` | `python3 bin/forge sync --apply --all` |
 | Edit this document | `config/AGENT-SYSTEM.md` in forge | `python3 scripts/sync/sync_system_doc.py --apply` |
 
 `forge sync` without `--apply` changes nothing. `forge sync NAME` limits it to one project and writes no
-user-scope file; `--all` runs every project even from inside a session.
+user-scope file; `--all` runs every project even from inside a session. `--apply` needs one of the two.
 
 ## Projects: what each project loads
 
