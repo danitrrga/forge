@@ -67,6 +67,7 @@ from fwx.execute import orca as orca_mod  # noqa: E402
 s = helpers.Suite()
 FAKE = os.path.join(ROOT, "tests", "fake_orca.py")
 LIMIT = 2.5
+STEER_LIMIT = 5  # case_steer only: a parked question is stopped after 3 * limit, and 3 * 2.5 s left a loaded CI runner too little margin
 LINE = re.compile(r"run (\S+) (done|failed|needs-owner): (.*)\Z")
 BAD = "python3 -c \"import os,sys; sys.exit(1 if os.path.exists('BAD') else 0)\""
 THREE = [task("T1", 1, ["src/a.py"]), task("T2", 1, ["src/b.py"]), task("T3", 2, ["src/c.py"])]
@@ -1156,16 +1157,17 @@ def finish_run(p, timeout=60):
 
 def case_steer(root, S):
     """A worker's question reaches the orchestrator once, the orchestrator's answer to the worker's dispatch wakes it, and while the question is open the worker is
-    neither stopped as idle nor past its limit (the fake's limit is 2.5 s, its idle window 0.4 s, and the question stays open 3.2 s). Orca 1.4.273, live probe.
+    neither stopped as idle nor past its limit (the case's limit is STEER_LIMIT, 5 s, so the question is stopped only after 15 s; its idle window is 0.4 s and the question stays open 5.7 s). Orca 1.4.273, live probe.
     Seen red on the code before `--orchestrator` existed (`wave run` took no such flag):
       FAIL: steer: the run started and sent the question -> no send to orca_session_id:..., exit 2
       FAIL: a question reaches the orchestrator once -> 0 sends over many ticks"""
     w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": {"mode": "ask", "question": "which colour?\nblue or red"}}})
-    p = start_run(w, root, "--orchestrator", ORCH)
+    limit = STEER_LIMIT
+    p = start_run(w, root, "--orchestrator", ORCH, FWX_RUN_LIMIT_S=str(limit))
     wait_for(lambda: sent(w, ORCH) or p.poll() is not None)
     S.ok("steer: the run started and sent the question -> %s" % (sent(w, ORCH) or "no send to %s, exit %r" % (ORCH, p.poll())), bool(sent(w, ORCH)))
-    time.sleep(LIMIT + 0.7)
-    S.ok("an open question pauses the idle stop and the limit: the run still waits after %.1f s -> exit %r" % (LIMIT + 0.7, p.poll()), p.poll() is None)
+    time.sleep(limit + 0.7)
+    S.ok("an open question pauses the idle stop and the limit: the run still waits after %.1f s -> exit %r" % (limit + 0.7, p.poll()), p.poll() is None)
     answered = time.time()
     r = orchestra(w, "orchestration", "send", "--to", "dispatch:ctx_1", "--subject", "Answer", "--body", "blue")
     S.eq("steer: the orchestrator's send to the dispatch is accepted", r.returncode, 0)
