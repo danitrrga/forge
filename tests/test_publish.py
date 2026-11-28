@@ -20,14 +20,38 @@ import sandbox  # noqa: E402
 failures = []
 notrun = []
 FORGE = sandbox.FORGE
-ALLOWLIST = os.path.join(FORGE, "publish", "engine.gitignore")
-DENY = os.path.join(FORGE, "config", "publish-deny.txt")
+sys.path.insert(0, FORGE)
+from forge import publish as forge_publish  # noqa: E402
+
 # The two private files exist wherever the data does; a stranger's checkout has neither, and then
 # the cases that need them print NOT RUN instead of failing. config/projects/ alone is not the
 # data: `forge init` creates it in a stranger's checkout (red there before, M1: "FAIL
 # config/publish-deny.txt does not exist", "FAIL publish/engine.gitignore does not exist"). Either
 # file present is the data, so a checkout that lost one of them still fails on that one.
-HAVE_DATA = os.path.isdir(os.path.join(FORGE, "config", "projects")) and (os.path.exists(DENY) or os.path.exists(ALLOWLIST))
+#
+# A linked worktree never holds the private files (the engine's git ignores them), so a PR that changes
+# .gitignore was never compared with publish/engine.gitignore until after the merge (DTC-132, twice). The
+# data is then the main checkout's (forge.publish.main_checkout), and the comparison is the main checkout's
+# copy against the WORKTREE's .gitignore. Red before, with a line planted in the worktree's .gitignore that the
+# main checkout's copy lacks:
+#   NOT RUN allowlist cases (no data on this machine)
+# and after:
+#   FAIL publish/engine.gitignore is the engine's .gitignore, line for line (- copy, + .gitignore) = ["-# docs/: the README's images only; the rest of docs/ is the checkout owner's (forge init writes docs/AGENT-SYSTEM.md).", "+# docs/: the README's images only; the rest of docs/ is the checkout owner's.", '+/planted-drift-line'], want []
+# (the first two entries are drift that already existed: the copy never got the comment edit of the system-doc move.)
+def _has_data(root):
+    return os.path.isdir(os.path.join(root, "config", "projects")) and (
+        os.path.exists(os.path.join(root, "config", "publish-deny.txt"))
+        or os.path.exists(os.path.join(root, "publish", "engine.gitignore")))
+
+
+DATA_ROOT = FORGE
+if not _has_data(FORGE):
+    _main = forge_publish.main_checkout(FORGE)
+    if _main and _has_data(_main):
+        DATA_ROOT = _main
+ALLOWLIST = os.path.join(DATA_ROOT, "publish", "engine.gitignore")
+DENY = os.path.join(DATA_ROOT, "config", "publish-deny.txt")
+HAVE_DATA = _has_data(DATA_ROOT)
 
 
 def want(label, got, expected):
@@ -417,7 +441,7 @@ def allowlist_cases():
     want("publish/engine.gitignore is the engine's .gitignore, line for line (- copy, + .gitignore)", drift, [])
     code, out = run(["git", "-C", FORGE, "ls-files", "-c", "-z"], FORGE)
     tracked = set(p for p in out.split("\0") if p)
-    code, out = run(["git", "-C", FORGE, "ls-files", "-c", "-i", "-z", "--exclude-from=publish/engine.gitignore"], FORGE)
+    code, out = run(["git", "-C", FORGE, "ls-files", "-c", "-i", "-z", "--exclude-from=" + ALLOWLIST], FORGE)
     ignored = set(p for p in out.split("\0") if p)
     engine = tracked - ignored
     private = ["hooks/test_audit_tool_use.py",
