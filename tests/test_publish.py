@@ -947,6 +947,13 @@ def worktree_layout_cases():
     want("bare clone, linked worktree = exit", code, 0)
     has("bare clone, linked worktree", out, "PASS lint", "(public list)")
 
+    # core.bare is a git boolean: `yes` is as true as `true` (red before --bool: "bare clone with core.bare=yes,
+    # linked worktree = exit = 2, want 0")
+    git_out(bare, "config", "core.bare", "yes")
+    code, out = check_message(tree, "clean")
+    want("bare clone with core.bare=yes, linked worktree = exit", code, 0)
+    has("bare clone with core.bare=yes, linked worktree", out, "PASS lint", "(public list)")
+
     # E1-1, inherited GIT_DIR: a git hook of one repo exports GIT_DIR and friends, and git then ignores -C. A
     # plain checkout with no list, checked from such a hook, is still the public list. Red with the first fix
     # (exit 2 on the rev-parse of the leaked git dir): "inherited GIT_DIR, plain checkout = exit = 2, want 0"

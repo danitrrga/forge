@@ -143,12 +143,12 @@ def main_checkout(root):
         gitdir, common = (os.path.abspath(os.path.join(root, x)) for x in lines[:2])
         if os.path.realpath(gitdir) == os.path.realpath(common):
             return None
-        conf = [subprocess.run(["git", "config", "--file", os.path.join(common, "config"), "--get", key],
-                               capture_output=True, text=True, env=env).stdout.strip() for key in ("core.bare", "core.worktree")]
+        cfg = ["git", "config", "--file", os.path.join(common, "config")]
+        bare = subprocess.run(cfg + ["--bool", "--get", "core.bare"], capture_output=True, text=True, env=env).stdout.strip()
+        wt = subprocess.run(cfg + ["--get", "core.worktree"], capture_output=True, text=True, env=env).stdout.strip()
     except OSError:
         return None
-    bare, wt = conf
-    if bare.lower() == "true":
+    if bare == "true":  # --bool turns yes, on and 1 into true
         return None
     if wt:
         main = os.path.abspath(os.path.join(common, wt))
