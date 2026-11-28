@@ -40,7 +40,7 @@ git worktrees, reviews it and walks the finished UI. It is the part of forge thi
 
 fwx lives in `plugins/fwx/`: a Claude Code plugin with a command line, `plugins/fwx/bin/fwx`. It is how forge runs
 work, not only how it sets it up. forge installs and configures it per project: `"framework": true` in its project file, then
-`forge sync --apply` enables the plugin there and writes the one file it reads, `.claude/fwx.json` (models per role,
+`forge sync --apply NAME` enables the plugin there and writes the one file it reads, `.claude/fwx.json` (models per role,
 round cap, limits, Linear labels, checks). Set the field back to `false` and forge takes it all out again. fwx
 replaces the GSD integration, and its changes are reviewed in the same pull requests as the engine's.
 
@@ -171,7 +171,7 @@ python3 bin/forge new ~/code/myproject  # registers an existing project and sync
 python3 bin/forge new myproject --stack generic --apply   # or makes one in projects_dir, then syncs it
 python3 bin/forge doctor                # what is broken, and how to fix it
 python3 bin/forge sync                  # dry-run: what would change
-python3 bin/forge sync --apply          # write it
+python3 bin/forge sync --apply --all    # write it
 ```
 
 To type `forge` instead, link it onto your PATH: `ln -s ~/forge/bin/forge ~/.local/bin/forge`.
@@ -269,7 +269,7 @@ installed another way.
 |---|---|---|---|
 | `codex` | `~/.codex/skills`, each project's `.codex/config.toml` and `.agents/skills` links, so Codex sees the same skills; with `codex_harness` true in `config/forge.json` also its hook rows in `~/.codex/hooks.json` and each project's MCP servers in `.codex/config.toml`, with it false (the default, Codex as a reviewer) neither, and forge takes out only what it wrote | `codex` on PATH | off; `init` offers it when `codex` is found |
 | `hindsight` | the Hindsight coding-agent memory hooks and its rendered config | Hindsight's coding-agents package, `config/hindsight-coding-agents.json`, `node`; written for one machine's layout, so read `forge/memory.py` first | off |
-| `consent` | one user-scope `PreToolUse` hook row (`hooks/guard_tool_use.py --consent`, `onFailure: block`) that makes a push to a production branch, a command, or an MCP tool that acts on production wait for a yes in a window of its own; production is each project's `production` field and the rules are in `config/gateway.json` | Omarchy and `gum` for the built-in adapter, `python3` | off. Roll back: set `integrations.consent` to `false` and run `forge sync --apply`, which removes the row even when `config/gateway.json` is broken |
+| `consent` | one user-scope `PreToolUse` hook row (`hooks/guard_tool_use.py --consent`, `onFailure: block`) that makes a push to a production branch, a command, or an MCP tool that acts on production wait for a yes in a window of its own; production is each project's `production` field and the rules are in `config/gateway.json` | Omarchy and `gum` for the built-in adapter, `python3` | off. Roll back: set `integrations.consent` to `false` and run `forge sync --apply --all`, which removes the row even when `config/gateway.json` is broken |
 | `agent_browser` | asks for the `agent-browser` browser tool: a `config/toolchain.json` entry whose `when` is `{"integration": "agent_browser"}` is installed by `forge toolchain --fix` only while this is `true`, and `forge doctor` FAILs, naming that command, when the binary is not on PATH | `agent-browser`, installed by mise from that toolchain entry | off. Roll back: set `integrations.agent_browser` to `false`; the entry is then a SKIP and nothing is uninstalled |
 
 ## Bring your own skills

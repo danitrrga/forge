@@ -81,7 +81,7 @@ Its tests are `orca plugin test plugins/fwx/orca` and `orca plugin check plugins
 
 The plugin reads one file, `.claude/fwx.json` of the project's main checkout, and only through `lib/fwx/config.py`.
 From a worktree or any subfolder it finds the main checkout's file through git's common directory. A setup tool
-(forge) generates it: `forge sync --apply` rewrites it from the project's file (`config/projects/<name>.json`) and from the
+(forge) generates it: `forge sync --apply NAME` rewrites it from the project's file (`config/projects/<name>.json`) and from the
 `framework` section of forge's `config/forge.json`, so a hand edit there is lost on the next sync. Without such a tool, write it by hand to the schema:
 
 ```json
@@ -156,7 +156,7 @@ The `project` table:
 
 ### Changing a key
 
-The file is generated, so change its source and not the file. To change one, ask an agent: say which key and which value, and it edits the setup tool's source (for forge, `config/projects/<name>.json` for a `project` key, `config/forge.json`'s `framework` section for any other), then runs `forge sync --apply` (plain `forge sync` only shows what would change). Not every key reads from there, and editing the source forge ignores changes nothing: `factory.mode` is the project file's `factory` and `factory.ui_bugs` its `factory_ui_bugs` (the `framework` section's `factory` table fills only the other `factory` keys); `project.name` is the project file's `project`; `project.default_branch` is read from git, so it changes with the repository's branch and not with a file; `project.factory_branch` is fixed at `"factory"`; and each `integrations` switch is forge's own switch for that tool in `config/forge.json`, not a key of the `framework` section. Where no setup tool writes the file, it edits `.claude/fwx.json` by hand to the schema above. Either way, for a model it ends by running `fwx model <role> <size>` to show the new value is the one in force; no command reads the other keys back, so for those it re-reads the file.
+The file is generated, so change its source and not the file. To change one, ask an agent: say which key and which value, and it edits the setup tool's source (for forge, `config/projects/<name>.json` for a `project` key, `config/forge.json`'s `framework` section for any other), then runs `forge sync --apply NAME` (plain `forge sync` only shows what would change). Not every key reads from there, and editing the source forge ignores changes nothing: `factory.mode` is the project file's `factory` and `factory.ui_bugs` its `factory_ui_bugs` (the `framework` section's `factory` table fills only the other `factory` keys); `project.name` is the project file's `project`; `project.default_branch` is read from git, so it changes with the repository's branch and not with a file; `project.factory_branch` is fixed at `"factory"`; and each `integrations` switch is forge's own switch for that tool in `config/forge.json`, not a key of the `framework` section. Where no setup tool writes the file, it edits `.claude/fwx.json` by hand to the schema above. Either way, for a model it ends by running `fwx model <role> <size>` to show the new value is the one in force; no command reads the other keys back, so for those it re-reads the file.
 
 ### What is not configurable
 
