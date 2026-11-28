@@ -7,7 +7,7 @@ round.
 `integrate(cwd, ...)` merges the branches of a wave into the branch the checkout `cwd` is on, with `--no-ff`, in the order
 given. It refuses (exit 2, nothing merged) a checkout with uncommitted changes, a branch whose worktree holds a live agent
 (`cleanup.lock_state`: the pid lives and its start time is the lock's; a dead agent's lock does not stop it), and, with
-`findings`, a set of branches whose commits are not exactly one `Fwx-Finding: <id>` commit per finding. At the first conflict
+`findings`, a set of branches in which a finding has no commit or a commit carries two findings. A branch already merged for this run and deleted (a resume) counts as merged and is not merged again. At the first conflict
 it aborts that merge and stops (the earlier ones stay). Then it runs the project's `worktree_setup` again in the checkout (a no-op unless a merge changed a dependency file; a failure
 stops here with `setup` in the result and exit 1) and then `project.checks_quick`, removes the
 worktrees of the branches it merged (only unlocked, clean ones: a stale lock is `cleanup`'s), and, with `final` and everything
@@ -24,7 +24,7 @@ context file) makes the next step `owner` and says why. The session spends the r
 the red evidence of the checkout's HEAD, `verify` already made that failure a round and nothing more is spent. A failure is
 allowed only when fewer than `rounds` were spent before it: the third round is fixed, only the failure after it ends the job.
 
-`revert(cwd, part_dir, finding_ids)` reverts the commit of each finding, the newest first, and then runs the setup again like `integrate`
+`revert(cwd, part_dir, finding_ids)` reverts the commits of each finding (one or more), the newest first, and then runs the setup again like `integrate`
 (`setup` in the result on a failure). `summary(...)` says whether the gate
 of the run passes, and carries what the part report reads, from the run's own recorded calls (`_kept`; 09.5 T54): `findings` ({reported, fix, consider, note, dismissed, fixed: [{id, commit, severity}], outside}: the passes `wave findings` ended,
 and the commits of the `Fwx-Finding` trailers of the findings a `wave merge --findings` merged), `criteria`, `outside` (the items of the reports
@@ -78,7 +78,8 @@ def _commits(top, *rev):
 
 
 def _findings_check(top, phase, branches, wanted, merged=None):
-    """{ok, problems}: each finding in exactly one commit of the branches, and no commit for two findings. `merged` ({branch: merge commit}) names the branches a resumed merge found already merged
+    """{ok, problems}: each finding in at least one commit of the branches, and no commit for two findings. A finding fixed in two commits
+    is sound; `revert` takes them all. `merged` ({branch: merge commit}) names the branches a resumed merge found already merged
     and deleted: their commits are the ones that merge brought, `M^2 --not M^1`."""
     merged = merged or {}
     seen = {}
@@ -92,11 +93,8 @@ def _findings_check(top, phase, branches, wanted, merged=None):
         if len(ids) > 1:
             problems.append("commit %s carries %s: one commit per finding" % (sha[:8], " and ".join(ids)))
     for i in wanted:
-        n = sum(1 for found in seen.values() if i in found)
-        if n == 0:
+        if not any(i in found for found in seen.values()):
             problems.append("%s: no commit carries Fwx-Finding: %s" % (i, i))
-        elif n > 1:
-            problems.append("%s: %d commits carry Fwx-Finding: %s, want one" % (i, n, i))
     return {"ok": not problems, "problems": problems}
 
 
@@ -408,7 +406,7 @@ def fix_round(cwd, part_dir, why):
 
 
 def revert(cwd, part_dir, ids, say=lambda line: None):
-    """(exit code, result): {ok, head, reverted: [{id, commit, revert}], failed}. The commit of each finding is reverted,
+    """(exit code, result): {ok, head, reverted: [{id, commit, revert}], failed}. The commits of each finding are reverted,
     newest first, with no round spent; a revert that conflicts is aborted (the earlier ones stay) and exits 1. As after a merge, the
     worktree's setup runs again when a dependency file moved; a failure is exit 1 with `setup` in the result."""
     top = _top(cwd)
@@ -425,15 +423,15 @@ def revert(cwd, part_dir, ids, say=lambda line: None):
             where.setdefault(i, []).append(sha)
     chosen = []
     for i in ids:
-        shas = where.get(i, [])
-        if len(shas) != 1:
-            raise WaveError("%s: %s" % (i, "no commit of this branch carries Fwx-Finding: %s" % i if not shas
-                                       else "%d commits carry Fwx-Finding: %s, want one" % (len(shas), i)))
-        mixed = sorted(set(carried[shas[0]]))
-        if len(mixed) > 1:
-            raise WaveError("%s: its commit %s also carries %s, so it cannot be reverted alone"
-                            % (i, shas[0][:8], ", ".join(m for m in mixed if m != i)))
-        chosen.append((order.index(shas[0]), i, shas[0]))
+        shas = set(where.get(i, []))  # a finding may be fixed in several commits: all of them are reverted
+        if not shas:
+            raise WaveError("%s: no commit of this branch carries Fwx-Finding: %s" % (i, i))
+        for sha in shas:
+            mixed = sorted(set(carried[sha]))
+            if len(mixed) > 1:
+                raise WaveError("%s: its commit %s also carries %s, so it cannot be reverted alone"
+                                % (i, sha[:8], ", ".join(m for m in mixed if m != i)))
+            chosen.append((order.index(sha), i, sha))
     result = {"ok": True, "head": verify.head(top), "reverted": [], "failed": None}
     for _pos, i, sha in sorted(set(chosen)):
         r = git(top, "revert", "--no-edit", sha)

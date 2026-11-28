@@ -433,6 +433,41 @@ def case_integrate_resume(R, S):
         x.stop()
 
 
+def case_findings_two_commits(R, S):
+    """DTC-140 (i): one finding fixed in two sound commits was refused ("o1: 2 commits carry Fwx-Finding: o1, want one") and burned a round.
+    Red before the fix: FAIL: two commits for one finding: ok: got (2, False), want (0, True)
+    FAIL: revert, a duplicate trailer: exit: got (2, 'fwx wave revert: F1: 2 commits carry Fwx-Finding: F1, want one'), want (0, '')"""
+    sc = Scene()
+    b = sc.agent("fix", [("src/a.py", "a1\n", ["F1"]), ("src/b.py", "b2\n", ["F1"]), ("src/c.py", "c3\n", ["F2"])])
+    r = sc.integrate(R, b, extra=("--findings", "F1,F2"))
+    v = J(r) or {}
+    S.eq("two commits for one finding: ok", (r.returncode, (v.get("findings_check") or {}).get("ok")), (0, True))
+    r = sc.call(R, "revert", "--part-dir", sc.part, "--run", sc.run, "--findings", "F1")
+    v = ok_json(S, "revert, one finding in two commits", r)
+    S.eq("revert, one finding in two commits: both are gone, F2's stays",
+         tuple(open(os.path.join(sc.cwd, f)).read() if exists(os.path.join(sc.cwd, f)) else None for f in ("src/a.py", "src/b.py", "src/c.py")), ("a\n", "b\n", "c3\n"))
+    S.eq("revert: one entry per commit", [x.get("id") for x in v.get("reverted") or []], ["F1", "F1"])
+    S.ok("revert: a clean tree", sc.clean())
+    sc.stop()
+
+    # two trailers of one id on one commit revert it once; a commit of the id that also carries another finding still refuses the whole revert
+    s2 = Scene()
+    b = s2.agent("fix", [("src/a.py", "a1\n", ["F1", "F1"])])
+    ok_json(S, "integrate, a duplicate trailer", s2.integrate(R, b, extra=("--findings", "F1")))
+    v = ok_json(S, "revert, a duplicate trailer", s2.call(R, "revert", "--part-dir", s2.part, "--run", s2.run, "--findings", "F1"))
+    S.eq("revert, a duplicate trailer: the commit is reverted once", (len(v.get("reverted") or []), open(os.path.join(s2.cwd, "src/a.py")).read()), (1, "a\n"))
+    s3 = Scene()
+    b = s3.agent("fix", [("src/a.py", "a1\n", ["F1"]), ("src/b.py", "b2\n", ["F1", "F2"])])
+    before = s3.head()
+    ok_json(S, "integrate, a mixed commit", s3.integrate(R, b))
+    mid = s3.head()
+    r = s3.call(R, "revert", "--part-dir", s3.part, "--run", s3.run, "--findings", "F1")
+    S.eq("revert, one of the commits also carries F2: exit 2, nothing reverted", (r.returncode, s3.head()), (2, mid))
+    S.ok("revert, a mixed commit: the message names the other finding", "also carries F2" in r.stderr, r.stderr[-200:])
+    for x in (s2, s3):
+        x.stop()
+
+
 def case_integrate_final(R, S):
     sc = Scene(protected=["src/secret/**"])
     b1 = sc.agent("one", [(".github/workflows/ci.yml", "name: x\n", None), ("src/secret/k.py", "k\n", None)])
@@ -1054,7 +1089,7 @@ def case_next_rules(R, S):
 
 
 CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_dirty, case_integrate_lock,
-         case_integrate_findings, case_integrate_resume, case_integrate_final, case_integrate_default_merge, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_cleanup_live_run, case_summary,
+         case_integrate_findings, case_integrate_resume, case_findings_two_commits, case_integrate_final, case_integrate_default_merge, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_cleanup_live_run, case_summary,
          case_summary_report, case_step_files, case_next, case_next_rules]
 
 I = "lib/fwx/execute/integrate.py"
