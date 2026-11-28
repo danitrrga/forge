@@ -22,8 +22,8 @@ and the groups `fix`, `consider`, `note`, `dismissed`, `file` with `routes` (id 
 The one behaviour that is not a port is the threshold: the verifier runs only above `THRESHOLD` items (D10), where execute.js ran it on any. Below
 it every item is fixed, a large `outside` item excepted (it is too big for a round: it goes to `file`).
 D25 (09-trim): an item of severity `low` (the verifier's, else the reviewer's) goes to `consider`, never to `fix`: only medium and high cost a fix
-round and a new gate. So does an item whose file is under `.fwx/` (executors may not write there: no commit could carry its fix), and it counts
-nothing towards the threshold.
+round and a new gate. So does an item whose file no commit of the worktree can carry (`_uncommittable`: under `.fwx/`, outside the worktree, or git-ignored and
+untracked), and it counts nothing towards the threshold.
 
 State is read from the run's own recorded calls (`steps`, oldest first), never from variables of a running script: the pass, its items, and the
 misses of each unit (a unit's name holds its pass, so a miss of one pass never counts in the next). Only a `report.json` inside the folder
@@ -37,7 +37,7 @@ import re
 from fwx import config, plan, plan_step, state
 from fwx.core import evidence
 from fwx.execute import brief, integrate, prepare
-from fwx.execute.base import WaveError, out, toplevel
+from fwx.execute.base import WaveError, git, out, toplevel
 from fwx.execute.report import last_line, norm_path, outside_problem, recorded_file
 
 THRESHOLD = 3
@@ -247,14 +247,26 @@ def _large(outside_of, ident):
     return o is not None and o["size"] == "large"
 
 
-def _under_fwx(it):
-    """A finding on a file of `.fwx/`: executors may not write there, so no fix round can ever commit it."""
-    return ".fwx" in it["file"].replace("\\", "/").split("/")
+def _uncommittable(top, it, outside_of):
+    """No commit of the worktree `top` can carry a finding's file: it is under `.fwx/` (executors may not write there), outside `top`, or git-ignored and
+    untracked (data another history owns). An `outside` item is judged by its `where` as the reviewer wrote it: `norm_path` has stripped its `/` and `..`."""
+    o = outside_of.get(it["id"])
+    raw = re.sub(r":\d+\Z", "", o["where"]) if o else it["file"]
+    if ".fwx" in it["file"].replace("\\", "/").split("/"):
+        return True
+    if "\0" in raw:
+        return False
+    root = os.path.realpath(top)
+    real = os.path.realpath(os.path.join(root, os.path.expanduser(raw.strip())))
+    if os.path.commonpath([root, real]) != root:
+        return True
+    r = git(top, "check-ignore", "-z", "--stdin", input=os.path.relpath(real, root) + "\0")  # exit 0: ignored; a tracked file is never reported
+    return r.returncode == 0
 
 
-def _route(items, outside_of, by):
+def _route(top, items, outside_of, by):
     """(groups, routes) of the items. `by` is {id: verdict} from the verifier, or None below the threshold: every item is then to fix, but a
-    `low` one and one under `.fwx/` (listed for the owner)."""
+    `low` one and one no commit can carry (listed for the owner)."""
     groups = {"fix": [], "consider": [], "note": [], "dismissed": [], "file": []}
     routes = {}
     for it in items:
@@ -262,7 +274,7 @@ def _route(items, outside_of, by):
         d = (by or {}).get(ident)
         verdict = d["verdict"] if d else "fix"
         severity = d["severity"] if d and d["severity"] in brief.SEVERITY else it["severity"]
-        forced = _under_fwx(it)
+        forced = _uncommittable(top, it, outside_of)
         if _large(outside_of, ident) and verdict == "fix" and not forced:
             # too big for a fix round whatever its severity: returned for the session to file as a Linear issue
             groups["file"].append(outside_of[ident])
@@ -376,14 +388,14 @@ def findings(cwd, part_dir, run, lines, verdicts, control, steps):
         return 0, _missed(steps, tag, misses)
     items, outside_of, criteria = _items(tag, units, reports, _controls(control) if control else [])
     if not items:
-        return 0, _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, _route([], {}, None)[0], {})
-    if sum(not _under_fwx(i) for i in items) > THRESHOLD:  # what `_route` lists for the owner anyway is no reason to run a verifier
+        return 0, _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, _route(top, [], {}, None)[0], {})
+    if sum(not _uncommittable(top, i, outside_of) for i in items) > THRESHOLD:  # what `_route` lists for the owner anyway is no reason to run a verifier
         unit, ctx = tag + "-verifier", _context(top, part_dir, run)[2]
         facts = brief.review_facts("review-verifier", tag, unit, passed["from"], passed["to"], ctx, items=items)
         path = _write(brief.review_path(ctx["folder"], "verify-%s" % tag), facts, brief.render_review(facts))
         return 0, _result("verify", tag, why="more than %d items: launch the verifier with its brief, then `fwx wave findings --run %s --verdicts \"<last line of its reply>\"`"
                           % (THRESHOLD, run), unit=unit, brief=path, items=items, outside_of=outside_of, criteria=criteria, reported=len(items))
-    groups, routes = _route(items, outside_of, None)
+    groups, routes = _route(top, items, outside_of, None)
     return 0, _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, groups, routes)
 
 
@@ -430,5 +442,5 @@ def _judge(top, part_dir, run, line, steps):
     if by is None:
         miss = {"role": "review-verifier", "unit": unit, "brief": waiting["brief"], "rejected": None, "note": "\nYour last report was rejected, so write it again: %s." % note if note else ""}
         return _missed(steps, tag, [miss], unit=unit, brief=waiting["brief"], items=items, outside_of=outside_of, criteria=criteria, reported=len(items))
-    groups, routes = _route(items, outside_of, by)
+    groups, routes = _route(top, items, outside_of, by)
     return _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, groups, routes, unit=unit)
