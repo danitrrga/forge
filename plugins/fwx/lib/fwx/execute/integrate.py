@@ -77,11 +77,14 @@ def _commits(top, *rev):
     return rows
 
 
-def _findings_check(top, phase, branches, wanted):
-    """{ok, problems}: each finding in exactly one commit of the branches, and no commit for two findings."""
+def _findings_check(top, phase, branches, wanted, merged=None):
+    """{ok, problems}: each finding in exactly one commit of the branches, and no commit for two findings. `merged` ({branch: merge commit}) names the branches a resumed merge found already merged
+    and deleted: their commits are the ones that merge brought, `M^2 --not M^1`."""
+    merged = merged or {}
     seen = {}
     for b in branches:
-        for sha, found in _commits(top, "refs/heads/" + b, "--not", phase):
+        rev = (merged[b] + "^2", "--not", merged[b] + "^1") if b in merged else ("refs/heads/" + b, "--not", phase)
+        for sha, found in _commits(top, *rev):
             seen[sha] = found
     problems = []
     for sha, found in seen.items():
@@ -95,6 +98,22 @@ def _findings_check(top, phase, branches, wanted):
         elif n > 1:
             problems.append("%s: %d commits carry Fwx-Finding: %s, want one" % (i, n, i))
     return {"ok": not problems, "problems": problems}
+
+
+def _merged_before(top, run, branch):
+    """The merge commit of `branch` already on HEAD's first-parent line for this run, or None. `_merge` writes the subject `Merge branch '<b>'`
+    and the trailer `Fwx-Run: <run>`; both must match exactly, so `T2` is not `T23` and run `-1` is not run `-10`. A `wave merge` that died after
+    `git merge` and before its journal row leaves such a commit, and the branch itself is gone."""
+    r = git(top, "log", "--merges", "--first-parent", "--fixed-strings", "--grep=Fwx-Run: %s" % run,
+            "--format=%H%x1f%s%x1f%(trailers:key=Fwx-Run,valueonly,unfold)%x1e", "HEAD")
+    if r.returncode:
+        raise WaveError("git log of the merges failed: %s" % r.stderr.strip())
+    for rec in r.stdout.split("\x1e"):
+        sha, _, rest = rec.strip("\n").partition("\x1f")
+        subject, _, runs = rest.partition("\x1f")
+        if subject == "Merge branch '%s'" % branch and run in [x.strip() for x in runs.splitlines()]:
+            return sha.strip()
+    return None
 
 
 def _setup_again(top, commands, result, say):
@@ -294,11 +313,15 @@ def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda li
     _clean(top)
     cfg = config.load(top)
     base = cleanup.base_of(top, run) if final else None
+    gone = {}  # branches a resumed merge finds merged already, their branch deleted: {branch: its merge commit}
     for b in branches:
         if b == phase:
             raise WaveError("%s is the phase branch: it cannot be merged into itself" % b)
         if git(top, "rev-parse", "--verify", "--quiet", "refs/heads/" + b).returncode:
-            raise WaveError("no branch %s" % b)
+            m = _merged_before(top, run, b)
+            if m is None:
+                raise WaveError("no branch %s" % b)
+            gone[b] = m
     result = {"ok": False, "head": verify.head(top), "merged": [], "conflict": None, "remaining": [], "locked": [],
               "findings_check": {"ok": True, "problems": []}, "quick": {"ran": False, "cmds": [], "rc": 0},
               "verify": {"ran": False, "rc": None, "line": ""}, "trusted": [], "protected": []}
@@ -311,11 +334,14 @@ def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda li
         say("a live agent holds %s: nothing merged" % ", ".join(x["branch"] for x in result["locked"]))
         return 2, result
     if findings:
-        result["findings_check"] = _findings_check(top, phase, branches, findings)
+        result["findings_check"] = _findings_check(top, phase, branches, findings, gone)
         if not result["findings_check"]["ok"]:
             say("the commits are not one per finding: nothing merged")
             return 2, result
     for b in branches:
+        if b in gone:  # merged before the last run died: counted, so `remaining` stays aligned, and not merged again
+            result["merged"].append(b)
+            continue
         r = git(top, "merge", "--no-ff", "--no-edit", "-m", "Merge branch '%s'" % b, "-m", "Fwx-Run: %s" % run, "refs/heads/" + b)
         if r.returncode:
             files = [p for p in (out(top, "diff", "--name-only", "--diff-filter=U") or "").splitlines() if p]

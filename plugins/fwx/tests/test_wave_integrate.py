@@ -372,6 +372,67 @@ def case_integrate_findings(R, S):
     sc.stop()
 
 
+def merged_by_hand(sc, branch, run=None):
+    """What a `wave merge` that died after `git merge` and before its journal row leaves: the branch merged onto the phase branch with the
+    message form `_merge` writes, then its worktree and branch gone."""
+    helpers.git(sc.cwd, "merge", "--no-ff", "--no-edit", "-m", "Merge branch '%s'" % branch, "-m", "Fwx-Run: %s" % (run or sc.run), "refs/heads/" + branch)
+    helpers.git(sc.repo, "worktree", "remove", "--force", sc.trees[branch])
+    helpers.git(sc.repo, "branch", "-D", branch)
+
+
+def case_integrate_resume(R, S):
+    """DTC-141: `wave run --resume` re-entered the final merge of branches that had merged and been deleted.
+    Red before the fix: FAIL: resume, a branch merged and deleted: exit: got (2 ... 'no branch worktree-agent-one'), want (0, '')"""
+    sc = Scene()
+    b1 = sc.agent("one", [("src/a.py", "a1\n", None)])
+    b2 = sc.agent("two", [("src/b.py", "b2\n", None)])
+    merged_by_hand(sc, b1)
+    mid = sc.head()
+    v = ok_json(S, "resume, a branch merged and deleted", sc.integrate(R, b1, b2))
+    S.eq("resume: both are reported merged, in order", (v.get("ok"), v.get("merged")), (True, [b1, b2]))
+    S.eq("resume: the deleted one is not merged again (one new merge, b2's)", helpers.git(sc.cwd, "rev-list", "--count", "--merges", mid + "..HEAD").strip(), "1")
+    S.ok("resume: the other branch's worktree is removed", not exists(sc.trees[b2]))
+    sc.stop()
+
+    # `remaining` stays aligned with the branches: the conflict is b2's, so only b3 is left
+    s2 = Scene()
+    b1 = s2.agent("one", [("src/a.py", "mine\n", None)])
+    b2 = s2.agent("two", [("src/a.py", "yours\n", None)])
+    b3 = s2.agent("three", [("src/b.py", "b3\n", None)])
+    merged_by_hand(s2, b1)
+    v = ok_json(S, "resume, then a conflict", s2.integrate(R, b1, b2, b3), code=1)
+    S.eq("resume, then a conflict: merged, conflict, remaining", (v.get("merged"), (v.get("conflict") or {}).get("branch"), v.get("remaining")), ([b1], b2, [b3]))
+    s2.stop()
+
+    # a prefix is not a match (T2 vs T23), and another run's merge is not this run's
+    s3 = Scene()
+    b2 = s3.agent("t2", [("src/a.py", "a1\n", None)])
+    merged_by_hand(s3, b2)
+    r = s3.integrate(R, "worktree-agent-t23")
+    S.ok("a prefix of a merged branch's name is no match: still 'no branch'", r.returncode != 0 and "no branch worktree-agent-t23" in r.stderr, r.stderr[-200:])
+    s3.stop()
+    s4 = Scene()
+    b1 = s4.agent("one", [("src/a.py", "a1\n", None)])
+    merged_by_hand(s4, b1, run="01-alpha-%s-10" % s4.base[:7])
+    r = s4.integrate(R, b1)
+    S.ok("a merge of another run (a longer id with the same start) is no match: still 'no branch'", r.returncode != 0 and "no branch %s" % b1 in r.stderr, r.stderr[-200:])
+    s4.stop()
+
+    # fix-round branch, resumed with --findings: the check reads the commits the merge brought
+    s5 = Scene()
+    b = s5.agent("fix", [("src/a.py", "a1\n", ["F1"]), ("src/b.py", "b2\n", ["F2"])])
+    merged_by_hand(s5, b)
+    v = ok_json(S, "resume with --findings", s5.integrate(R, b, extra=("--findings", "F1,F2")))
+    S.eq("resume with --findings: ok, the check read the merged commits", (v.get("ok"), v.get("merged"), (v.get("findings_check") or {}).get("ok")), (True, [b], True))
+    s6 = Scene()
+    b = s6.agent("fix", [("src/a.py", "a1\n", ["F1"])])
+    merged_by_hand(s6, b)
+    v = ok_json(S, "resume with --findings, one nobody carries", s6.integrate(R, b, extra=("--findings", "F1,F9")), code=2)
+    S.ok("resume with --findings: F9 is still refused, named", any("F9" in p for p in (v.get("findings_check") or {}).get("problems", [])), repr(v.get("findings_check")))
+    for x in (s5, s6):
+        x.stop()
+
+
 def case_integrate_final(R, S):
     sc = Scene(protected=["src/secret/**"])
     b1 = sc.agent("one", [(".github/workflows/ci.yml", "name: x\n", None), ("src/secret/k.py", "k\n", None)])
@@ -993,7 +1054,7 @@ def case_next_rules(R, S):
 
 
 CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_dirty, case_integrate_lock,
-         case_integrate_findings, case_integrate_final, case_integrate_default_merge, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_cleanup_live_run, case_summary,
+         case_integrate_findings, case_integrate_resume, case_integrate_final, case_integrate_default_merge, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_cleanup_live_run, case_summary,
          case_summary_report, case_step_files, case_next, case_next_rules]
 
 I = "lib/fwx/execute/integrate.py"
